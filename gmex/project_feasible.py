@@ -2,9 +2,8 @@
 # Classes and functions for projecting flux matrices.
 
 
-from abc import ABC, abstractmethod
-from typing import Dict, Tuple
 import warnings
+from abc import ABC, abstractmethod
 
 import torch
 from tqdm import tqdm
@@ -15,18 +14,18 @@ from .utils.opt import *
 
 class FluxIProjector(ABC):
     """Parent class for flux I-projectors."""
+
     def __init__(
-            self, min_entry: float, max_iters: int, tol: float, progress: bool
-        ) -> None:
+        self, min_entry: float, max_iters: int, tol: float, progress: bool
+    ) -> None:
         self.min_entry = float(min_entry)
         self.max_iters = int(max_iters)
         self.tol = float(tol)
         self.progress = bool(progress)
-    
+
     @abstractmethod
-    def project(self):
-        """Project onto feasible subset."""
-        pass
+    def _reset(self) -> None:
+        """Forget cached projection state."""
 
 
 class SinkhornKnoppScaler(FluxIProjector):
@@ -47,7 +46,7 @@ class SinkhornKnoppScaler(FluxIProjector):
     Method
     ------
     def project(self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-                ) -> Tuple[torch.Tensor, Dict]:
+                ) -> tuple[torch.Tensor, dict]:
         Sinkhorn-scale matrix K to fixed row- and column- marginal P.
 
     Reference
@@ -56,7 +55,10 @@ class SinkhornKnoppScaler(FluxIProjector):
     Concerning nonnegative matrices and doubly stochastic matrices,
     Pacific J. Math 21, 343 (1967).
     """
-    def __init__(self, min_entry: float, max_iters: int, tol: float, progress: bool = False) -> None:
+
+    def __init__(
+        self, min_entry: float, max_iters: int, tol: float, progress: bool = False
+    ) -> None:
         super().__init__(min_entry, max_iters, tol, progress)
         self._r: torch.Tensor | None = None
         self._c: torch.Tensor | None = None
@@ -67,8 +69,9 @@ class SinkhornKnoppScaler(FluxIProjector):
         self._c = None
 
     @torch.no_grad()
-    def project(self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-                ) -> Tuple[torch.Tensor, Dict]:
+    def project(
+        self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
+    ) -> tuple[torch.Tensor, dict]:
         """Sinkhorn-scale matrix K to fixed row- and column- marginal P.
 
         Parameters
@@ -87,48 +90,62 @@ class SinkhornKnoppScaler(FluxIProjector):
         info : dict
             Diagnostics including residuals and iterations.
         """
-        check_nonnegative_square_matrix(K, name='K')
+        check_nonnegative_square_matrix(K, name="K")
         n = K.shape[0]
         check_probability_vector(P, n)
         Pf = normalize_probability_vector(P)
 
-        if self._r is None or self._c is None or self._r.shape != (n,) or self._c.shape != (n,):
+        if (
+            self._r is None
+            or self._c is None
+            or self._r.shape != (n,)
+            or self._c.shape != (n,)
+        ):
             self._r = torch.ones((n,), device=K.device, dtype=K.dtype)
             self._c = torch.ones((n,), device=K.device, dtype=K.dtype)
         r = self._r
         c = self._c
 
         Kp = rescale_sinkhorn_input(K, min_entry=self.min_entry)
-        row_err = float('inf')
-        col_err = float('inf')
+        row_err = float("inf")
+        col_err = float("inf")
 
         iter_range = range(self.max_iters)
         if self.progress and tqdm is not None:
-            iter_range = tqdm(iter_range, desc='Scaling iterations', leave=False)
-        for it in iter_range: # iteratively update scalings
-            r = Pf / torch.clamp(Kp @ c, min=self.min_entry) # r <- P / (K c)
-            c = Pf / torch.clamp(Kp.T @ r, min=self.min_entry) # c <- P / (K^T r)
+            iter_range = tqdm(iter_range, desc="Scaling iterations", leave=False)
+        for it in iter_range:  # iteratively update scalings
+            r = Pf / torch.clamp(Kp @ c, min=self.min_entry)  # r <- P / (K c)
+            c = Pf / torch.clamp(Kp.T @ r, min=self.min_entry)  # c <- P / (K^T r)
             if (it % check_every) == 0 or it == self.max_iters - 1:
                 F = r[:, None] * Kp * c[None, :]
                 # row_err = tv_distance(F.sum(dim=1), Pf)
                 # col_err = tv_distance(F.sum(dim=0), Pf)
-                row_err = torch.linalg.vector_norm(F.sum(dim=1) - Pf, ord=1).item() / 2.0
-                col_err = torch.linalg.vector_norm(F.sum(dim=0) - Pf, ord=1).item() / 2.0
-                if max(row_err, col_err) <= self.tol: # break upon convergence
-                    self._r, self._c = r, c # cache scalings
+                row_err = (
+                    torch.linalg.vector_norm(F.sum(dim=1) - Pf, ord=1).item() / 2.0
+                )
+                col_err = (
+                    torch.linalg.vector_norm(F.sum(dim=0) - Pf, ord=1).item() / 2.0
+                )
+                if max(row_err, col_err) <= self.tol:  # break upon convergence
+                    self._r, self._c = r, c  # cache scalings
                     return F, {
-                        'converged': True,
-                        'iters': it + 1,
-                        'row_err': row_err,
-                        'col_err': col_err
+                        "converged": True,
+                        "iters": it + 1,
+                        "row_err": row_err,
+                        "col_err": col_err,
                     }
 
         F = r[:, None] * Kp * c[None, :]
-        self._r, self._c = r, c # cache scalings
+        self._r, self._c = r, c  # cache scalings
         warnings.warn(
-            f'IPF not converged: row error {row_err:.2e} or column error {col_err:.2e} greater than tolerance {self.tol}. Increase max_iters.'
+            f"IPF not converged: row error {row_err:.2e} or column error {col_err:.2e} greater than tolerance {self.tol}. Increase max_iters."
         )
-        return F, {'converged': False, 'iters': self.max_iters, 'row_err': row_err, 'col_err': col_err}
+        return F, {
+            "converged": False,
+            "iters": self.max_iters,
+            "row_err": row_err,
+            "col_err": col_err,
+        }
 
 
 class KnightRuizUcarScaler(FluxIProjector):
@@ -149,7 +166,7 @@ class KnightRuizUcarScaler(FluxIProjector):
     Method
     ------
     def project(self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-                ) -> Tuple[torch.Tensor, Dict]:
+                ) -> tuple[torch.Tensor, dict]:
         Scale matrix K to impose symmetry and fixed row and column marginal P.
 
     Reference
@@ -158,19 +175,23 @@ class KnightRuizUcarScaler(FluxIProjector):
     A symmetry preserving algorithm for matrix scaling,
     SIAM J. Matrix Anal. Appl. 35, 25 (2014).
     """
-    def __init__(self, min_entry: float, max_iters: int, tol: float, progress: bool = False) -> None:
+
+    def __init__(
+        self, min_entry: float, max_iters: int, tol: float, progress: bool = False
+    ) -> None:
         super().__init__(min_entry, max_iters, tol, progress)
         self._d: torch.Tensor | None = None
 
     def _reset(self) -> None:
         """Forget cached scaling."""
         self._d = None
-    
+
     @torch.no_grad()
-    def project(self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-                ) -> Tuple[torch.Tensor, Dict]:
+    def project(
+        self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
+    ) -> tuple[torch.Tensor, dict]:
         """Scale matrix K to impose symmetry and row- and column- marginal P.
-        
+
         Parameters
         ----------
         K : (n, n) torch.Tensor
@@ -187,7 +208,7 @@ class KnightRuizUcarScaler(FluxIProjector):
         info : dict
             Diagnostics including residuals and iterations.
         """
-        check_nonnegative_square_matrix(K, 'K')
+        check_nonnegative_square_matrix(K, "K")
         n = K.shape[0]
         check_probability_vector(P, n)
         Pf = normalize_probability_vector(P)
@@ -199,29 +220,29 @@ class KnightRuizUcarScaler(FluxIProjector):
         Ks = torch.clamp(K, min=self.min_entry)
         Ks = symmetrize_matrix(Ks, geom=True)
         Ks = rescale_sinkhorn_input(Ks, min_entry=self.min_entry)
-        row_err = float('inf')
+        row_err = float("inf")
 
         iter_range = range(self.max_iters)
         if self.progress and tqdm is not None:
-            iter_range = tqdm(iter_range, desc='Scaling iterations', leave=False)
+            iter_range = tqdm(iter_range, desc="Scaling iterations", leave=False)
         for it in iter_range:
-            d = d * torch.sqrt(
-                Pf / torch.clamp(d * (Ks @ d), min=self.min_entry)
-            )
+            d = d * torch.sqrt(Pf / torch.clamp(d * (Ks @ d), min=self.min_entry))
             if (it % check_every) == 0 or it == self.max_iters - 1:
                 F = d[:, None] * Ks * d[None, :]
                 # row_err = tv_distance(F.sum(dim=1), Pf)
-                row_err = torch.linalg.vector_norm(F.sum(dim=1) - Pf, ord=1).item() / 2.0
+                row_err = (
+                    torch.linalg.vector_norm(F.sum(dim=1) - Pf, ord=1).item() / 2.0
+                )
                 if row_err <= self.tol:
-                    self._d = d # cache scaling
-                    return F, {'converged': True, 'iters': it + 1, 'row_err': row_err}
+                    self._d = d  # cache scaling
+                    return F, {"converged": True, "iters": it + 1, "row_err": row_err}
 
         F = d[:, None] * Ks * d[None, :]
-        self._d = d # cache scaling
+        self._d = d  # cache scaling
         warnings.warn(
-            f'IPF not converged: row error {row_err:.2e} greater than tolerance {self.tol}. Increase max_iters.'
+            f"IPF not converged: row error {row_err:.2e} greater than tolerance {self.tol}. Increase max_iters."
         )
-        return F, {'converged': False, 'iters': self.max_iters, 'row_err': row_err}
+        return F, {"converged": False, "iters": self.max_iters, "row_err": row_err}
 
 
 class _CommutingFluxIProjector(FluxIProjector):
@@ -248,13 +269,16 @@ class _CommutingFluxIProjector(FluxIProjector):
     progress : bool, optional
         Whether to display progress bar.
     """
-    def __init__(self,
-                 min_entry: float,
-                 max_iters: int,
-                 tol: float,
-                 max_iters_ls: int = 25,
-                 armijo: float = 1e-4,
-                 progress: bool = False) -> None:
+
+    def __init__(
+        self,
+        min_entry: float,
+        max_iters: int,
+        tol: float,
+        max_iters_ls: int = 25,
+        armijo: float = 1e-4,
+        progress: bool = False,
+    ) -> None:
         super().__init__(min_entry, max_iters, tol, progress)
         self.max_iters_ls = int(max_iters_ls)
         self.armijo = float(armijo)
@@ -288,7 +312,9 @@ class _CommutingFluxIProjector(FluxIProjector):
         Uf = as_float64(U_prev).detach().cpu()
         if not self._cache_prepared(U_prev):
             A, b = build_commuting_constraints_flux(Uf)
-            Q, c, rank = orthonormalize_affine_constraints(A, b, tol=self.tol, linear=True)
+            Q, c, rank = orthonormalize_affine_constraints(
+                A, b, tol=self.tol, linear=True
+            )
 
             self._Q = Q
             self._c = c
@@ -297,20 +323,19 @@ class _CommutingFluxIProjector(FluxIProjector):
             self._dual = None
 
     @staticmethod
-    def _get_residuals(F: torch.Tensor, U_prev: torch.Tensor) -> Dict[str, float]:
+    def _get_residuals(F: torch.Tensor, U_prev: torch.Tensor) -> dict[str, float]:
         """Compute feasibility residuals for diagnostics."""
         return {
-            'comm_err': float(
-                torch.abs(U_prev @ F - F @ U_prev.T).max().detach().cpu().item()),
-            'neg_err': float(
-                torch.clamp(-F.min(), min=0.0).detach().cpu().item())
+            "comm_err": float(
+                torch.abs(U_prev @ F - F @ U_prev.T).max().detach().cpu().item()
+            ),
+            "neg_err": float(torch.clamp(-F.min(), min=0.0).detach().cpu().item()),
         }
 
     @torch.no_grad()
-    def project(self,
-                K: torch.Tensor,
-                U_prev: torch.Tensor,
-                check_every: int = 1) -> Tuple[torch.Tensor, Dict]:
+    def project(
+        self, K: torch.Tensor, U_prev: torch.Tensor, check_every: int = 1
+    ) -> tuple[torch.Tensor, dict]:
         """Project K onto the flux-commuting affine subset in KL divergence.
 
         Parameters
@@ -331,15 +356,19 @@ class _CommutingFluxIProjector(FluxIProjector):
             Diagnostics including residuals, iterations, and affine rank.
         """
         if K.ndim != 2 or K.shape[0] != K.shape[1] or type(K) != torch.Tensor:
-            raise ValueError(f'K must be a square tensor, got a {tuple(K.shape)} {type(K)}.')
+            raise ValueError(
+                f"K must be a square tensor, got a {tuple(K.shape)} {type(K)}."
+            )
         if not torch.isfinite(K).all():
-            raise ValueError('K must have only finite entries.')
+            raise ValueError("K must have only finite entries.")
         if U_prev.shape != K.shape:
-            raise ValueError(f'U_prev must have shape {tuple(K.shape)}, got {tuple(U_prev.shape)}.')
+            raise ValueError(
+                f"U_prev must have shape {tuple(K.shape)}, got {tuple(U_prev.shape)}."
+            )
         if not torch.isfinite(U_prev).all():
-            raise ValueError('U_prev must have only finite entries.')
+            raise ValueError("U_prev must have only finite entries.")
 
-        check_column_stochastic_matrix(U_prev, name='U_prev')
+        check_column_stochastic_matrix(U_prev, name="U_prev")
         Kf = as_float64(K).detach().cpu()
         Uf = as_float64(U_prev).detach().cpu()
         Kp = torch.clamp(nan_to_pos(Kf, min_entry=self.min_entry), min=self.min_entry)
@@ -356,40 +385,43 @@ class _CommutingFluxIProjector(FluxIProjector):
             max_iters_ls=self.max_iters_ls,
             armijo=self.armijo,
             min_entry=self.min_entry,
-            dual0=self._dual
+            dual0=self._dual,
         )
-        if dual_info['converged']:
+        if dual_info["converged"]:
             self._dual = dual
         else:
             self._dual = None
 
         F_proj = x_proj.reshape_as(Kp)
         residuals = self._get_residuals(F_proj, Uf)
-        comm_err = residuals['comm_err']
-        neg_err = residuals['neg_err']
-        step_err = float(dual_info['step_err'])
-        converged = bool(dual_info['converged']) and max(comm_err, neg_err) <= self.tol
+        comm_err = residuals["comm_err"]
+        neg_err = residuals["neg_err"]
+        step_err = float(dual_info["step_err"])
+        converged = bool(dual_info["converged"]) and max(comm_err, neg_err) <= self.tol
 
         info = {
-            'converged': converged,
-            'iters': int(dual_info['iters']),
-            'comm_err': comm_err,
-            'neg_err': neg_err,
-            'step_err': step_err,
-            'affine_err': float(dual_info['affine_err']),
-            'constraint_rank': self._rank,
-            'objective': float(generalized_kl_divergence(
-                F_proj, Kp, eps=self.min_entry
-            ).detach().cpu().item()),
+            "converged": converged,
+            "iters": int(dual_info["iters"]),
+            "comm_err": comm_err,
+            "neg_err": neg_err,
+            "step_err": step_err,
+            "affine_err": float(dual_info["affine_err"]),
+            "constraint_rank": self._rank,
+            "objective": float(
+                generalized_kl_divergence(F_proj, Kp, eps=self.min_entry)
+                .detach()
+                .cpu()
+                .item()
+            ),
         }
 
-        if not info['converged']:
+        if not info["converged"]:
             warnings.warn(
-                'KL projection onto commuting affine subset not converged: '
-                f'commutator error {comm_err:.2e}, '
+                "KL projection onto commuting affine subset not converged: "
+                f"commutator error {comm_err:.2e}, "
                 f"affine residual {info['affine_err']:.2e}, or "
-                f'step error {step_err:.2e} greater than tolerance {self.tol}. '
-                'Increase max_iters.'
+                f"step error {step_err:.2e} greater than tolerance {self.tol}. "
+                "Increase max_iters."
             )
 
         out_dtype = K.dtype if K.is_floating_point() else torch.float64
@@ -434,7 +466,7 @@ class ReversibleCommutingIProjector(FluxIProjector):
     project(K: torch.Tensor,
             U_prev: torch.Tensor,
             P: torch.Tensor,
-            check_every: int = 1) -> Tuple[torch.Tensor, Dict]:
+            check_every: int = 1) -> tuple[torch.Tensor, dict]:
         Projects K onto feasible subset.
 
     Reference
@@ -444,24 +476,31 @@ class ReversibleCommutingIProjector(FluxIProjector):
     its application to the solution of problems in convex programming,
     U.S.S.R. Comput. Math. Math. Phys. 7, 200 (1967).
     """
-    def __init__(self,
-                 min_entry: float,
-                 max_iters: int,
-                 tol: float,
-                 max_iters_symm: int = 2500,
-                 max_iters_comm: int = 250,
-                 max_iters_ls: int = 25,
-                 armijo: float = 1e-4,
-                 progress: bool = False) -> None:
+
+    def __init__(
+        self,
+        min_entry: float,
+        max_iters: int,
+        tol: float,
+        max_iters_symm: int = 2500,
+        max_iters_comm: int = 250,
+        max_iters_ls: int = 25,
+        armijo: float = 1e-4,
+        progress: bool = False,
+    ) -> None:
         super().__init__(min_entry, max_iters, tol, progress)
         self.max_iters_ls = int(max_iters_ls)
         self.armijo = float(armijo)
-        self._symm = KnightRuizUcarScaler(min_entry, max_iters_symm, tol, progress=False)
+        self._symm = KnightRuizUcarScaler(
+            min_entry, max_iters_symm, tol, progress=False
+        )
         self._comm = _CommutingFluxIProjector(
-            min_entry, max_iters_comm, tol,
+            min_entry,
+            max_iters_comm,
+            tol,
             max_iters_ls=self.max_iters_ls,
             armijo=self.armijo,
-            progress=False
+            progress=False,
         )
         self._P: torch.Tensor | None = None
 
@@ -479,21 +518,27 @@ class ReversibleCommutingIProjector(FluxIProjector):
             self._P = Pf.clone()
 
     @staticmethod
-    def _get_residuals(F: torch.Tensor, U_prev: torch.Tensor, P: torch.Tensor) -> Dict[str, float]:
+    def _get_residuals(
+        F: torch.Tensor, U_prev: torch.Tensor, P: torch.Tensor
+    ) -> dict[str, float]:
         """Compute feasibility residuals for diagnostics."""
         return {
-            'symm_err': float(torch.abs(F - F.T).max().detach().cpu().item()),
-            'row_err': float(torch.abs(F.sum(dim=1) - P).max().detach().cpu().item()),
-            'comm_err': float(torch.abs(U_prev @ F - F @ U_prev.T).max().detach().cpu().item()),
-            'neg_err': float(torch.clamp(-F.min(), min=0.0).detach().cpu().item()),
+            "symm_err": float(torch.abs(F - F.T).max().detach().cpu().item()),
+            "row_err": float(torch.abs(F.sum(dim=1) - P).max().detach().cpu().item()),
+            "comm_err": float(
+                torch.abs(U_prev @ F - F @ U_prev.T).max().detach().cpu().item()
+            ),
+            "neg_err": float(torch.clamp(-F.min(), min=0.0).detach().cpu().item()),
         }
 
     @torch.no_grad()
-    def project(self,
-                K: torch.Tensor,
-                U_prev: torch.Tensor,
-                P: torch.Tensor,
-                check_every: int = 1) -> Tuple[torch.Tensor, Dict]:
+    def project(
+        self,
+        K: torch.Tensor,
+        U_prev: torch.Tensor,
+        P: torch.Tensor,
+        check_every: int = 1,
+    ) -> tuple[torch.Tensor, dict]:
         """Project K onto the reversible commuting flux subset in KL divergence.
 
         Parameters
@@ -515,84 +560,98 @@ class ReversibleCommutingIProjector(FluxIProjector):
             Diagnostics including residuals, iterations, and inner-projector metadata.
         """
         if K.ndim != 2 or K.shape[0] != K.shape[1] or type(K) != torch.Tensor:
-            raise ValueError(f'K must be a square tensor, got a {tuple(K.shape)} {type(K)}.')
+            raise ValueError(
+                f"K must be a square tensor, got a {tuple(K.shape)} {type(K)}."
+            )
         if not torch.isfinite(K).all():
-            raise ValueError('K must have only finite entries.')
+            raise ValueError("K must have only finite entries.")
         if U_prev.shape != K.shape:
-            raise ValueError(f'U_prev must have shape {tuple(K.shape)}, got {tuple(U_prev.shape)}.')
+            raise ValueError(
+                f"U_prev must have shape {tuple(K.shape)}, got {tuple(U_prev.shape)}."
+            )
         if not torch.isfinite(U_prev).all():
-            raise ValueError('U_prev must have only finite entries.')
+            raise ValueError("U_prev must have only finite entries.")
         if not torch.isfinite(P).all():
-            raise ValueError('P must have only finite entries.')
+            raise ValueError("P must have only finite entries.")
 
         n = K.shape[0]
         check_probability_vector(P, n)
-        check_stationary_column_stochastic_matrix(U_prev, P, db=True, name='U_prev')
+        check_stationary_column_stochastic_matrix(U_prev, P, db=True, name="U_prev")
         Kf = as_float64(K).detach().cpu()
         Uf = as_float64(U_prev).detach().cpu()
         Pf = normalize_probability_vector(P).detach().cpu()
-        F_proj = torch.clamp(nan_to_pos(Kf, min_entry=self.min_entry), min=self.min_entry)
+        F_proj = torch.clamp(
+            nan_to_pos(Kf, min_entry=self.min_entry), min=self.min_entry
+        )
 
         check_every = max(int(check_every), 1)
         converged = False
         iter_range = range(self.max_iters)
         if self.progress and tqdm is not None:
-            iter_range = tqdm(iter_range, desc='Cyclic KL projections', leave=False)
+            iter_range = tqdm(iter_range, desc="Cyclic KL projections", leave=False)
 
         self._prepare_cache(Pf)
-        symm_info = {'iters': 0, 'row_err': float('inf')}
-        comm_info = {'iters': 0, 'affine_err': float('inf'), 'constraint_rank': 0}
-        symm_err = row_err = comm_err = neg_err = step_err = float('inf')
+        symm_info = {"iters": 0, "row_err": float("inf")}
+        comm_info = {"iters": 0, "affine_err": float("inf"), "constraint_rank": 0}
+        symm_err = row_err = comm_err = neg_err = step_err = float("inf")
 
         # we always start and end with KRU for stability
         with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
+            warnings.simplefilter("ignore")
             F_proj, symm_info = self._symm.project(F_proj, Pf)
 
         for it in iter_range:
             F_last = F_proj.clone()
             with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
+                warnings.simplefilter("ignore")
                 F_proj, comm_info = self._comm.project(F_proj, Uf)
                 F_proj, symm_info = self._symm.project(F_proj, Pf)
 
             if (it % check_every) == 0 or it == self.max_iters - 1:
                 residuals = self._get_residuals(F_proj, Uf, Pf)
-                symm_err = residuals['symm_err']
-                row_err = residuals['row_err']
-                comm_err = residuals['comm_err']
-                neg_err = residuals['neg_err']
+                symm_err = residuals["symm_err"]
+                row_err = residuals["row_err"]
+                comm_err = residuals["comm_err"]
+                neg_err = residuals["neg_err"]
                 step_err = float(torch.abs(F_proj - F_last).max().detach().cpu().item())
                 if max(symm_err, row_err, comm_err, neg_err) <= self.tol:
                     converged = True
                     break
 
         info = {
-            'converged': converged,
-            'iters': it + 1,
-            'symm_err': symm_err,
-            'row_err': row_err,
-            'comm_err': comm_err,
-            'neg_err': neg_err,
-            'step_err': step_err,
-            'symm_iters': int(symm_info['iters']),
-            'symm_row_err': float(symm_info['row_err']),
-            'comm_iters': int(comm_info['iters']),
-            'comm_affine_err': float(comm_info['affine_err']),
-            'constraint_rank': int(comm_info['constraint_rank']),
-            'objective': float(generalized_kl_divergence(
-                F_proj, torch.clamp(nan_to_pos(Kf, min_entry=self.min_entry), min=self.min_entry),
-                eps=self.min_entry
-            ).detach().cpu().item()),
+            "converged": converged,
+            "iters": it + 1,
+            "symm_err": symm_err,
+            "row_err": row_err,
+            "comm_err": comm_err,
+            "neg_err": neg_err,
+            "step_err": step_err,
+            "symm_iters": int(symm_info["iters"]),
+            "symm_row_err": float(symm_info["row_err"]),
+            "comm_iters": int(comm_info["iters"]),
+            "comm_affine_err": float(comm_info["affine_err"]),
+            "constraint_rank": int(comm_info["constraint_rank"]),
+            "objective": float(
+                generalized_kl_divergence(
+                    F_proj,
+                    torch.clamp(
+                        nan_to_pos(Kf, min_entry=self.min_entry), min=self.min_entry
+                    ),
+                    eps=self.min_entry,
+                )
+                .detach()
+                .cpu()
+                .item()
+            ),
         }
 
-        if not info['converged']:
+        if not info["converged"]:
             warnings.warn(
-                'Cyclic KL projection not converged: '
-                f'symmetry error {symm_err:.2e}, '
-                f'row-marginal error {row_err:.2e}, '
-                f'commutator error {comm_err:.2e} greater than tolerance {self.tol}. '
-                'Increase max_iters.'
+                "Cyclic KL projection not converged: "
+                f"symmetry error {symm_err:.2e}, "
+                f"row-marginal error {row_err:.2e}, "
+                f"commutator error {comm_err:.2e} greater than tolerance {self.tol}. "
+                "Increase max_iters."
             )
 
         out_dtype = K.dtype if K.is_floating_point() else torch.float64
@@ -602,13 +661,15 @@ class ReversibleCommutingIProjector(FluxIProjector):
 ### WRAPPER FUNCTIONS ###
 
 
-def project_Us(Us: torch.Tensor,
-               lim_dist: torch.Tensor,
-               tol: float = 1e-12,
-               min_entry: float = 1e-24,
-               max_iters: int = 1000,
-               reversible: bool = False,
-               verbose: bool = True) -> Tuple[torch.Tensor, Dict]:
+def project_Us(
+    Us: torch.Tensor,
+    lim_dist: torch.Tensor,
+    tol: float = 1e-12,
+    min_entry: float = 1e-24,
+    max_iters: int = 1000,
+    reversible: bool = False,
+    verbose: bool = True,
+) -> tuple[torch.Tensor, dict]:
     """Project transition matrices onto feasible set using Sinkhorn scaling.
 
     Parameters
@@ -627,7 +688,7 @@ def project_Us(Us: torch.Tensor,
         Whether transition matrices must be reversible.
     verbose : bool, optional
         Whether to display progress bar.
-    
+
     Returns
     -------
     Us_proj : (lags, n, n) torch.Tensor
@@ -636,16 +697,19 @@ def project_Us(Us: torch.Tensor,
         Projection metadata.
     """
     if reversible:
-        projector = KnightRuizUcarScaler(
-            min_entry, max_iters, tol, progress=False)
+        projector = KnightRuizUcarScaler(min_entry, max_iters, tol, progress=False)
     else:
-        projector = SinkhornKnoppScaler(
-            min_entry, max_iters, tol, progress=False)
+        projector = SinkhornKnoppScaler(min_entry, max_iters, tol, progress=False)
 
     Us_proj = torch.zeros_like(Us)
     Us_proj[0] = Us[0]
     metrics = {}
-    for lag in tqdm(range(1, Us.shape[0]), desc='Projecting transition matrices', disable=not verbose, leave=False):
+    for lag in tqdm(
+        range(1, Us.shape[0]),
+        desc="Projecting transition matrices",
+        disable=not verbose,
+        leave=False,
+    ):
         projector._reset()
         F = Us[lag] * lim_dist[None, :]
         if reversible:

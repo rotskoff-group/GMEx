@@ -21,6 +21,7 @@ dependencies = [
     "pickleshare>=0.7.5",
     "py-step-detect",
     "pytest>=8.3.4",
+    "ruff>=0.16.7",
     "scipy>=1.15.0",
     "statsmodels>=0.14.5",
     "torch>=2.5.1",
@@ -28,6 +29,7 @@ dependencies = [
     "torchsde>=0.2.6",
     "torchtune>=0.6.1",
     "tqdm>=4.67.1",
+    "ty>=0.0.80",
     "xlrd>=2.0.2",
 ]
 

@@ -41,15 +41,20 @@ def test_tv_distance_returns_expected_batch_values(
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Compute one TV distance per batch row by default."""
-    dists_truth = torch.stack((
-        simple_stationary_dist,
-        torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float64),
-    ))
-    dists_model = torch.stack((
-        torch.full((4,), 0.25, dtype=torch.float64),
-        torch.tensor([0.5, 0.5, 0.0, 0.0], dtype=torch.float64),
-    ))
+    dists_truth = torch.stack(
+        (
+            simple_stationary_dist,
+            torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float64),
+        )
+    )
+    dists_model = torch.stack(
+        (
+            torch.full((4,), 0.25, dtype=torch.float64),
+            torch.tensor([0.5, 0.5, 0.0, 0.0], dtype=torch.float64),
+        )
+    )
     observed_tv = tv_distance(dists_truth, dists_model)
+    assert isinstance(observed_tv, torch.Tensor)
     expected_tv = torch.tensor([0.2, 0.5], dtype=torch.float64)
     assert torch.allclose(observed_tv, expected_tv)
 
@@ -73,29 +78,31 @@ def test_kl_divergence_handles_zero_truth_mass_with_default_eps() -> None:
 
 def test_get_bootstrap_curve_CI_returns_expected_bounds() -> None:
     """Return column-wise lower and upper bootstrap bounds."""
-    samples = np.array([
-        [30, 300],
-        [10, 100],
-        [40, 400],
-        [20, 200],
-        [50, 500],
-        [60, 600],
-        [70, 700],
-        [80, 800],
-        [90, 900],
-        [100, 1000],
-        [110, 1100],
-        [120, 1200],
-        [130, 1300],
-        [140, 1400],
-        [150, 1500],
-        [160, 1600],
-        [170, 1700],
-        [180, 1800],
-        [190, 1900],
-        [200, 2000],
-        [210, 2100],
-    ])
+    samples = np.array(
+        [
+            [30, 300],
+            [10, 100],
+            [40, 400],
+            [20, 200],
+            [50, 500],
+            [60, 600],
+            [70, 700],
+            [80, 800],
+            [90, 900],
+            [100, 1000],
+            [110, 1100],
+            [120, 1200],
+            [130, 1300],
+            [140, 1400],
+            [150, 1500],
+            [160, 1600],
+            [170, 1700],
+            [180, 1800],
+            [190, 1900],
+            [200, 2000],
+            [210, 2100],
+        ]
+    )
 
     lower, upper = get_bootstrap_curve_CI(samples, 0.90)
 

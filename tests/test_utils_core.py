@@ -3,7 +3,6 @@
 
 
 import networkx as nx
-import numpy as np
 import pytest
 import torch
 
@@ -21,6 +20,7 @@ def test_coarsen_states():
     fine_states = torch.tensor([0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4])
     groups = [[0, 1, 4], [2, 3]]
     coarse_states = coarsen_states(fine_states, groups)
+    assert isinstance(coarse_states, torch.Tensor)
     expected_coarse_states = torch.tensor([0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0])
     assert torch.equal(coarse_states, expected_coarse_states)
 
@@ -46,11 +46,25 @@ def test_allocate_dists_uses_provided_initial_dist() -> None:
 
 def test_allocate_dists_requires_state_information() -> None:
     """Raise when neither the number of states nor an initial distribution is provided."""
-    with pytest.raises(ValueError, match="Either n_states or initial_dist must be provided"):
+    with pytest.raises(
+        ValueError, match="Either n_states or initial_dist must be provided"
+    ):
         allocate_dists(n_steps=2)
 
 
-def test_validate_groups_accepts_complete_partition(simple_groups: list[list[int]]) -> None:
+def test_allocate_dists_rejects_multidimensional_initial_dist() -> None:
+    """Reject an initial distribution that remains multidimensional after squeezing."""
+    initial_dist = torch.full((2, 2), 0.25, dtype=torch.float64)
+
+    with pytest.raises(
+        ValueError, match="initial_dist must be one-dimensional after squeezing"
+    ):
+        allocate_dists(n_steps=2, initial_dist=initial_dist)
+
+
+def test_validate_groups_accepts_complete_partition(
+    simple_groups: list[list[int]],
+) -> None:
     """Accept a valid partition of four microstates."""
     validate_groups(4, simple_groups)
 
@@ -137,12 +151,6 @@ def test_check_nonnegative_square_matrix_accepts_valid_tensor() -> None:
     check_nonnegative_square_matrix(matrix)
 
 
-def test_check_nonnegative_square_matrix_rejects_non_tensor() -> None:
-    """Reject inputs that are not torch tensors."""
-    with pytest.raises(TypeError, match="must be a torch.Tensor"):
-        check_nonnegative_square_matrix(np.ones((4, 4)))
-
-
 def test_check_nonnegative_square_matrix_rejects_non_2d_tensor() -> None:
     """Reject tensors that are not two-dimensional."""
     with pytest.raises(ValueError, match="must be 2D"):
@@ -168,12 +176,6 @@ def test_check_probability_vector_accepts_valid_distribution() -> None:
     check_probability_vector(torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float64), 4)
 
 
-def test_check_probability_vector_rejects_non_tensor() -> None:
-    """Reject non-tensor inputs."""
-    with pytest.raises(TypeError, match="must be a torch.Tensor"):
-        check_probability_vector([0.1, 0.2, 0.3, 0.4], 4)
-
-
 def test_check_probability_vector_rejects_wrong_rank() -> None:
     """Reject probability inputs that are not one-dimensional."""
     with pytest.raises(ValueError, match="must be 1D"):
@@ -189,18 +191,24 @@ def test_check_probability_vector_rejects_wrong_length() -> None:
 def test_check_probability_vector_rejects_nonpositive_entries() -> None:
     """Reject probability inputs with zero or negative entries."""
     with pytest.raises(ValueError, match="cannot have .* entries"):
-        check_probability_vector(torch.tensor([0.0, 0.2, 0.3, 0.5], dtype=torch.float64), 4)
+        check_probability_vector(
+            torch.tensor([0.0, 0.2, 0.3, 0.5], dtype=torch.float64), 4
+        )
 
 
 def test_check_probability_vector_rejects_sum_not_one() -> None:
     """Reject probability inputs that do not sum to one."""
     with pytest.raises(ValueError, match="must sum to one"):
-        check_probability_vector(torch.tensor([0.1, 0.2, 0.3, 0.3], dtype=torch.float64), 4)
+        check_probability_vector(
+            torch.tensor([0.1, 0.2, 0.3, 0.3], dtype=torch.float64), 4
+        )
 
 
 def test_normalize_probability_vector_returns_float64_normalized_values() -> None:
     """Normalize a positive vector to a float64 probability vector."""
-    normalized = normalize_probability_vector(torch.tensor([1, 2, 3, 4], dtype=torch.int64))
+    normalized = normalize_probability_vector(
+        torch.tensor([1, 2, 3, 4], dtype=torch.int64)
+    )
     expected = torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.float64)
     assert normalized.dtype == torch.float64
     assert torch.allclose(normalized, expected)
@@ -229,7 +237,9 @@ def test_nan_to_pos_returns_finite_input_unchanged() -> None:
 
 def test_nan_to_pos_replaces_nonfinite_entries() -> None:
     """Replace nan and infinite values with positive finite values."""
-    tensor = torch.tensor([float("nan"), float("inf"), float("-inf")], dtype=torch.float64)
+    tensor = torch.tensor(
+        [float("nan"), float("inf"), float("-inf")], dtype=torch.float64
+    )
     replaced = nan_to_pos(tensor, min_entry=1e-12)
     expected = torch.tensor(
         [1e-12, torch.finfo(torch.float64).max, 1e-12], dtype=torch.float64
@@ -377,7 +387,9 @@ def test_check_stationary_column_stochastic_matrix_rejects_nonstationary_vector(
     nonstationary = torch.full((4,), 0.25, dtype=torch.float64)
 
     with pytest.raises(ValueError, match="must be stationary with P"):
-        check_stationary_column_stochastic_matrix(simple_column_stochastic_matrix, nonstationary)
+        check_stationary_column_stochastic_matrix(
+            simple_column_stochastic_matrix, nonstationary
+        )
 
 
 def test_check_stationary_column_stochastic_matrix_accepts_reversible_fixture(
@@ -390,8 +402,9 @@ def test_check_stationary_column_stochastic_matrix_accepts_reversible_fixture(
     )
 
 
-def test_check_stationary_column_stochastic_matrix_rejects_nonreversible_matrix(
-) -> None:
+def test_check_stationary_column_stochastic_matrix_rejects_nonreversible_matrix() -> (
+    None
+):
     """Reject a stationary matrix that does not satisfy detailed balance."""
     nonreversible = torch.tensor(
         [

@@ -2,8 +2,6 @@
 # Helper functions for validation and evaluation.
 
 
-from typing import List, Tuple
-
 import numpy as np
 import torch
 
@@ -13,11 +11,13 @@ def np_rng_from_L():
     L.seed_everything only seeds traditional np global bit generator.
     It is necessary to get np rng in a complicated way for new np.random.Generator methods.
     """
-    seed = torch.randint(2 ** 32 - 1, (1,))[0]
+    seed = torch.randint(2**32 - 1, (1,))[0]
     return np.random.default_rng(int(seed))
 
 
-def _normalize_reduce_dims(ndim: int, reduce_dim: int | Tuple[int] | None) -> Tuple[int]:
+def _normalize_reduce_dims(
+    ndim: int, reduce_dim: int | tuple[int] | None
+) -> tuple[int, ...]:
     """Normalize reduction dimensions for batched distribution metrics."""
     if reduce_dim is None:
         if ndim == 1:
@@ -30,19 +30,22 @@ def _normalize_reduce_dims(ndim: int, reduce_dim: int | Tuple[int] | None) -> Tu
         reduce_dims = tuple(reduce_dim)
 
     normalized_dims = tuple(dim if dim >= 0 else ndim + dim for dim in reduce_dims)
-    assert len(normalized_dims) > 0, 'reduce_dim must contain at least one dimension'
-    assert len(set(normalized_dims)) == len(normalized_dims),\
-        'reduce_dim must not contain duplicate dimensions'
-    assert all(0 <= dim < ndim for dim in normalized_dims),\
-        'reduce_dim contains an invalid dimension'
+    assert len(normalized_dims) > 0, "reduce_dim must contain at least one dimension"
+    assert len(set(normalized_dims)) == len(normalized_dims), (
+        "reduce_dim must not contain duplicate dimensions"
+    )
+    assert all(0 <= dim < ndim for dim in normalized_dims), (
+        "reduce_dim contains an invalid dimension"
+    )
     return normalized_dims
 
 
-def kl_divergence(dists_truth: torch.Tensor,
-                  dists_model: torch.Tensor,
-                  eps: float | None = 1e-12,
-                  reduce_dim: int | Tuple[int] | None = None
-                  ) -> float | torch.Tensor:
+def kl_divergence(
+    dists_truth: torch.Tensor,
+    dists_model: torch.Tensor,
+    eps: float | None = 1e-12,
+    reduce_dim: int | tuple[int] | None = None,
+) -> float | torch.Tensor:
     """KL divergences between distributions or batches of distributions.
 
     Parameters
@@ -53,31 +56,36 @@ def kl_divergence(dists_truth: torch.Tensor,
         Model distributions.
     eps : float, optional
         Small value to which dists_model is clamped for numerical stability.
-    reduce_dim : int | Tuple[int] | None, optional
+    reduce_dim : int | tuple[int] | None, optional
         Dimensions spanning the support of each distribution. If ``None``,
         reduce over the whole tensor for 1D inputs and over all except zeroth otherwise.
-    
+
     Returns
     -------
     kls : float | torch.Tensor
         KL divergences from true to model distributions.
     """
-    assert dists_truth.shape == dists_model.shape,\
-        'dists_truth and dists_model shape mismatch'
+    assert dists_truth.shape == dists_model.shape, (
+        "dists_truth and dists_model shape mismatch"
+    )
     reduce_dims = _normalize_reduce_dims(dists_truth.ndim, reduce_dim)
     dists_truth_sum = dists_truth.sum(dim=reduce_dims)
     dists_model_sum = dists_model.sum(dim=reduce_dims)
     ones_like_dists_sum = torch.ones_like(dists_truth_sum)
-    assert torch.allclose(dists_truth_sum, ones_like_dists_sum),\
-        'dists_truth must sum to (approximately) 1 across reduce_dim'
-    assert torch.allclose(dists_model_sum, ones_like_dists_sum),\
-        'dists_model must sum to (approximately) 1 across reduce_dim'
+    assert torch.allclose(dists_truth_sum, ones_like_dists_sum), (
+        "dists_truth must sum to (approximately) 1 across reduce_dim"
+    )
+    assert torch.allclose(dists_model_sum, ones_like_dists_sum), (
+        "dists_model must sum to (approximately) 1 across reduce_dim"
+    )
 
     # clamp for safety
     if eps is not None:
         dists_model = dists_model.clone().clamp_min(eps)
         dists_truth_safe = dists_truth.clamp_min(eps)
-        dists_truth_safe = dists_truth_safe / dists_truth_safe.sum(dim=reduce_dims, keepdim=True)
+        dists_truth_safe = dists_truth_safe / dists_truth_safe.sum(
+            dim=reduce_dims, keepdim=True
+        )
         dists_model = dists_model / dists_model.sum(dim=reduce_dims, keepdim=True)
     else:
         dists_truth_safe = dists_truth
@@ -85,16 +93,19 @@ def kl_divergence(dists_truth: torch.Tensor,
     mask = dists_truth > 0
     log_ratio = torch.log(dists_truth_safe) - torch.log(dists_model)
     term = torch.where(
-        mask, dists_truth * log_ratio, torch.zeros((), dtype=dists_truth.dtype, device=dists_truth.device)
+        mask,
+        dists_truth * log_ratio,
+        torch.zeros((), dtype=dists_truth.dtype, device=dists_truth.device),
     )
     result = term.sum(dim=reduce_dims)
     return result.item() if result.ndim == 0 else result
 
 
-def tv_distance(dists_truth: torch.Tensor,
-                dists_model: torch.Tensor,
-                reduce_dim: int | Tuple[int] | None = None
-                ) -> float | torch.Tensor:
+def tv_distance(
+    dists_truth: torch.Tensor,
+    dists_model: torch.Tensor,
+    reduce_dim: int | tuple[int] | None = None,
+) -> float | torch.Tensor:
     """Total-variation distance between distributions or batches of distributions.
 
     Parameters
@@ -103,41 +114,48 @@ def tv_distance(dists_truth: torch.Tensor,
         True distributions.
     dists_model : torch.Tensor
         Model distributions.
-    reduce_dim : int | Tuple[int] | None, optional
+    reduce_dim : int | tuple[int] | None, optional
         Dimensions spanning the support of each distribution. If ``None``,
         reduce over the whole tensor for 1D inputs and over all dimensions except zeroth otherwise.
-    
+
     Returns
     -------
     tvs : float | torch.Tensor
         Total-variation distance between true and model distributions.
     """
-    assert dists_truth.shape == dists_model.shape,\
-        'dists_truth and dists_model shape mismatch'
+    assert dists_truth.shape == dists_model.shape, (
+        "dists_truth and dists_model shape mismatch"
+    )
     reduce_dims = _normalize_reduce_dims(dists_truth.ndim, reduce_dim)
     dists_truth_sum = dists_truth.sum(dim=reduce_dims)
     dists_model_sum = dists_model.sum(dim=reduce_dims)
     ones_like_dists_sum = torch.ones_like(dists_truth_sum)
-    assert torch.allclose(dists_truth_sum, ones_like_dists_sum),\
-        'dists_truth must sum to (approximately) 1 across reduce_dim'
-    assert torch.allclose(dists_model_sum, ones_like_dists_sum),\
-        'dists_model must sum to (approximately) 1 across reduce_dim'
+    assert torch.allclose(dists_truth_sum, ones_like_dists_sum), (
+        "dists_truth must sum to (approximately) 1 across reduce_dim"
+    )
+    assert torch.allclose(dists_model_sum, ones_like_dists_sum), (
+        "dists_model must sum to (approximately) 1 across reduce_dim"
+    )
     result = (dists_truth - dists_model).abs().sum(dim=reduce_dims) / 2
     return result.item() if result.ndim == 0 else result
 
 
-def get_bootstrap_curve_CI(samples: np.ndarray, pct: float) -> Tuple[np.ndarray, np.ndarray]:
-    '''Get bootstrap confidence interval of a curve.'''
+def get_bootstrap_curve_CI(
+    samples: np.ndarray, pct: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Get bootstrap confidence interval of a curve."""
     if samples.ndim != 2:
-        raise ValueError(f'samples must be 2D, got shape {tuple(samples.shape)}')
+        raise ValueError(f"samples must be 2D, got shape {tuple(samples.shape)}")
     if pct >= 1.0 or pct <= 0.0:
-        raise ValueError('pct must be in the range (0.0, 1.0)')
+        raise ValueError("pct must be in the range (0.0, 1.0)")
 
     n_bootstraps = samples.shape[0]
     half_alpha = 0.5 - pct / 2.0
     idx_lower = int(n_bootstraps * half_alpha)
     if idx_lower < 1:
-        raise ValueError(f'{n_bootstraps} bootstrap samples is not enough for a {pct} CI')
+        raise ValueError(
+            f"{n_bootstraps} bootstrap samples is not enough for a {pct} CI"
+        )
     idx_upper = n_bootstraps - idx_lower - 1
 
     samples.sort(axis=0)
@@ -146,23 +164,23 @@ def get_bootstrap_curve_CI(samples: np.ndarray, pct: float) -> Tuple[np.ndarray,
 
 def fpts_from_inhomogeneous_mc(
     tpms: torch.Tensor,
-    start_states: int | List[int] | torch.Tensor,
-    end_states: int | List[int] | torch.Tensor,
+    start_states: int | list[int] | torch.Tensor,
+    end_states: int | list[int] | torch.Tensor,
     start_dist: torch.Tensor | None = None,
     n_trajs: int = 1,
     max_steps: int | None = None,
-    generator: torch.Generator | None = None
+    generator: torch.Generator | None = None,
 ) -> torch.Tensor | int:
     """Simulate first-passage times for a time-inhomogeneous Markov chain.
-    
+
     Parameters
     ----------
     tpms : (N, M, M) torch.Tensor
         Row-stochastic time-dependent Markov-chain generators;
         tpms[min(i, N)] used at timestep i.
-    start_states : int | List[int] | torch.Tensor
+    start_states : int | list[int] | torch.Tensor
         Initial states from which to sample.
-    end_states : int | List[int] | torch.Tensor
+    end_states : int | list[int] | torch.Tensor
         States to treat as absorbing.
     start_dist : (M,) torch.Tensor, optional
         Initial states will be sampled from start_dist[start_states] (normalized).
@@ -173,7 +191,7 @@ def fpts_from_inhomogeneous_mc(
         Maximum number of steps for which to simulate trajectories.
     generator : torch.Generator | None, optional
         Generator for sampling.
-    
+
     Returns
     -------
     fpts : int | torch.Tensor
@@ -206,7 +224,9 @@ def fpts_from_inhomogeneous_mc(
         probs = torch.zeros(M, dtype=torch.float64, device=device)
         probs[start_states_t] = 1.0
     else:
-        start_dist_t = torch.as_tensor(start_dist, dtype=torch.float64, device=device).flatten()
+        start_dist_t = torch.as_tensor(
+            start_dist, dtype=torch.float64, device=device
+        ).flatten()
         if start_dist_t.numel() != M:
             raise ValueError("start_dist must have shape (M,).")
         if (start_dist_t < 0).any():
@@ -238,10 +258,14 @@ def fpts_from_inhomogeneous_mc(
     t = 0
     while alive.any():
         if max_steps is not None and t >= max_steps:
-            raise RuntimeError("max_steps reached before all trajectories hit end_states")
+            raise RuntimeError(
+                "max_steps reached before all trajectories hit end_states"
+            )
         idx = torch.where(alive)[0]
         row_cdf = cdf[min(t, N - 1), states[idx]]
-        u = torch.rand((idx.numel(), 1), dtype=row_cdf.dtype, device=device, generator=generator)
+        u = torch.rand(
+            (idx.numel(), 1), dtype=row_cdf.dtype, device=device, generator=generator
+        )
         next_states = torch.searchsorted(row_cdf, u, right=False).squeeze(-1)
 
         states[idx] = next_states
@@ -254,17 +278,18 @@ def fpts_from_inhomogeneous_mc(
 
 def fpts_from_traj(
     traj: torch.Tensor,
-    start_states: int | List[int] | torch.Tensor,
-    end_states: int | List[int] | torch.Tensor) -> torch.Tensor:
+    start_states: int | list[int] | torch.Tensor,
+    end_states: int | list[int] | torch.Tensor,
+) -> torch.Tensor:
     """Get first-passage times from a 1D integer trajectory.
 
     Parameters
     ----------
     traj : torch.Tensor
         Trajectory of integer states.
-    start_states : int | List[int] | torch.Tensor
+    start_states : int | list[int] | torch.Tensor
         Initial states.
-    end_states : int | List[int] | torch.Tensor
+    end_states : int | list[int] | torch.Tensor
         States to treat as absorbing.
 
     Returns
@@ -310,9 +335,9 @@ def fpts_from_traj(
     return torch.sort(fpts.to(torch.long)).values
 
 
-def get_dwell_probs(gs: torch.Tensor, max_timestep: int = 1000) -> dict:
+def get_dwell_probs(gs: torch.Tensor, max_timestep: int = 1000) -> torch.Tensor:
     """Get dwell-time densities for each state.
-    
+
     Parameters
     ----------
     gs : torch.Tensor, (N, M, M)
@@ -328,15 +353,15 @@ def get_dwell_probs(gs: torch.Tensor, max_timestep: int = 1000) -> dict:
     device = gs.device
 
     if gs.shape[1] != gs.shape[2] or gs.ndim != 3:
-        raise ValueError('gs must be 3D with same last two dims')
+        raise ValueError("gs must be 3D with same last two dims")
     if (gs < 0.0).any() or (gs > 1.0).any():
-        raise ValueError('gs may contain only valid probabilities')
-    
+        raise ValueError("gs may contain only valid probabilities")
+
     prob_dwell = torch.zeros((gs.shape[1], max_timestep), device=device)
     for start_state in range(gs.shape[1]):
         survival_probs = torch.ones((max_timestep,), dtype=gs.dtype, device=device)
         survival_probs *= gs[-1, start_state, start_state]
-        survival_probs[:gs.shape[0]] = gs[:max_timestep, start_state, start_state]
+        survival_probs[: gs.shape[0]] = gs[:max_timestep, start_state, start_state]
         prob_alive = torch.cumprod(survival_probs, 0)
         prob_dwell[start_state, 1:] = prob_alive[:-1] - prob_alive[1:]
 

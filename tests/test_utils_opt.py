@@ -3,15 +3,15 @@
 
 
 import math
+
 import pytest
 import torch
-from typing import Dict
 
 from gmex.utils.opt import *
 
 
 def test_check_count_matrices_accepts_markov_generated_counts(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: dict[str, torch.Tensor | object],
 ) -> None:
     """Accept count matrices generated from sampled trajectories."""
     count_matrices = simple_markov_count_data["count_matrices"]
@@ -32,7 +32,7 @@ def test_check_count_matrices_rejects_nonsquare_slices() -> None:
 
 
 def test_check_count_matrices_rejects_nondiagonal_lag_zero(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: dict[str, torch.Tensor | object],
 ) -> None:
     """Reject stacks whose zeroth count matrix is not diagonal."""
     count_matrices = simple_markov_count_data["count_matrices"]
@@ -66,7 +66,8 @@ def test_get_log_likelihood_matches_manual_smoothed_sum() -> None:
 
     observed = get_log_likelihood(counts, transitions, min_entry=min_entry)
     expected = torch.sum(
-        counts.to(dtype=transitions.dtype) * torch.log(torch.clamp(transitions, min=min_entry))
+        counts.to(dtype=transitions.dtype)
+        * torch.log(torch.clamp(transitions, min=min_entry))
     )
     assert torch.allclose(observed, expected)
 
@@ -222,13 +223,17 @@ def test_kl_affine_dual_backtracking_accepts_real_descent_step() -> None:
     assert not torch.equal(dual1, dual0)
 
 
-def test_kl_affine_dual_backtracking_returns_original_iterate_when_no_steps_allowed() -> None:
+def test_kl_affine_dual_backtracking_returns_original_iterate_when_no_steps_allowed() -> (
+    None
+):
     """Return the original iterate unchanged when line search is disabled."""
     dual = torch.tensor([0.0], dtype=torch.float64)
     dual_obj = 1.5
     dual_new, dual_obj_new, alpha, accepted = kl_affine_dual_backtracking(
         log_k=torch.log(torch.tensor([0.5, 0.5], dtype=torch.float64)),
-        Q=torch.tensor([[1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)]], dtype=torch.float64),
+        Q=torch.tensor(
+            [[1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0)]], dtype=torch.float64
+        ),
         c=torch.tensor([1.0 / math.sqrt(2.0)], dtype=torch.float64),
         dual=dual,
         step=torch.tensor([1.0], dtype=torch.float64),
@@ -266,7 +271,7 @@ def test_project_affine_kl_orthonormal_is_stable_for_large_dynamic_range() -> No
     assert x_proj.sum().item() == pytest.approx(3.0, abs=1e-10)
     assert torch.allclose(
         ratios,
-        torch.full_like(ratios, ratios.mean()),
+        torch.full_like(ratios, ratios.mean().item()),
         rtol=1e-10,
         atol=1e-24,
     )
@@ -274,7 +279,7 @@ def test_project_affine_kl_orthonormal_is_stable_for_large_dynamic_range() -> No
 
 def test_project_affine_kl_orthonormal_projects_markov_generated_counts(
     simple_column_stochastic_matrix: torch.Tensor,
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: dict[str, torch.Tensor | object],
 ) -> None:
     """Project a sampled count matrix onto the commuting affine subset."""
     count_matrices = simple_markov_count_data["count_matrices"]
@@ -293,7 +298,10 @@ def test_project_affine_kl_orthonormal_projects_markov_generated_counts(
         min_entry=1e-24,
     )
     flux = x_proj.reshape_as(K)
-    commutator = simple_column_stochastic_matrix @ flux - flux @ simple_column_stochastic_matrix.T
+    commutator = (
+        simple_column_stochastic_matrix @ flux
+        - flux @ simple_column_stochastic_matrix.T
+    )
 
     assert rank == Q.shape[0]
     assert info["converged"]

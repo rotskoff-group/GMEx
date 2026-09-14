@@ -2,16 +2,16 @@
 # pytest parameters
 
 
-import numpy as np
 import os
-from pathlib import Path
-import pytest
 import random
+from pathlib import Path
+
+import numpy as np
+import pytest
 import torch
 
 from gmex.markov_process import MarkovChain
 from gmex.utils.datasets import MultiSeqDataset
-
 
 ROOT = Path(__file__).resolve().parents[1]
 MPLCONFIGDIR = ROOT / ".pytest_mplconfig"
@@ -28,16 +28,13 @@ def pytest_addoption(parser) -> None:
         Parser used to register command-line options.
     """
     parser.addoption(
-        "--seed",
-        action="store",
-        default="42",
-        help="Random seed for tests."
+        "--seed", action="store", default="42", help="Random seed for tests."
     )
     parser.addoption(
         "--device",
         action="store",
         default="cpu",
-        help="Device to run tests on (e.g., 'cpu', 'cuda')."
+        help="Device to run tests on (e.g., 'cpu', 'cuda').",
     )
 
 

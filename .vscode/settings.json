@@ -1,0 +1,25 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+
+  "ruff.importStrategy": "fromEnvironment",
+  "ty.importStrategy": "fromEnvironment",
+
+  "ty.inlayHints.variableTypes": false,
+  "ty.inlayHints.callArgumentNames": false,
+
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+
+  "[jupyter]": {
+    "editor.defaultFormatter": null,
+    "editor.formatOnSave": false,
+    "ty.disableLanguageServices": true,
+    "ty.diagnosticMode": "off"
+  }
+}

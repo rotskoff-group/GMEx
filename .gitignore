@@ -1,17 +1,20 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
-.pytest_cache
+.pytest_cache/
 .pytest_mplconfig/
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+.env.*
 
-# Virtual environments
-.venv
-
-# Scratch
+# scratch
 scratch/
 lightning_logs/
 results/
@@ -20,22 +23,21 @@ old/
 notebooks/
 notes/
 
-# Explicitly ignore LaTeX auxiliary files
+# LaTeX
 tex/
 tex/*
 dtgme-paper/
 /dtgme-paper/
-
-# explicitely ignore jeremie's notebooks
-notebooks_jeremie/
-notebooks_jeremie/*
 
 # MACOSX
 .DS_Store
 __MACOSX/
 __MACOSX__/
 
-# editors
+# editors but keep project settings
 .codex
-.vscode
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .agents
+AGENTS.md
