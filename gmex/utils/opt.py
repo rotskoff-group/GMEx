@@ -7,17 +7,20 @@ from warnings import warn
 import torch
 
 from .core import *
-    
+from .types import AffineProjectionInfo
+
 
 @torch.no_grad()
 def check_count_matrices(Cs: torch.Tensor) -> None:
     """Validate skip bigrams."""
     if Cs.ndim != 3:
-        raise ValueError(f'Count matrices Cs must be 3D, got shape {tuple(Cs.shape)}.')
+        raise ValueError(f"Count matrices Cs must be 3D, got shape {tuple(Cs.shape)}.")
     if Cs.shape[1] != Cs.shape[2]:
-        raise ValueError(f'Count matrices must have same 1st and 2nd dimension, got shape {tuple(Cs.shape)}.')
+        raise ValueError(
+            f"Count matrices must have same 1st and 2nd dimension, got shape {tuple(Cs.shape)}."
+        )
     if not torch.allclose(Cs[0], torch.diag(torch.diag(Cs[0]))):
-        raise ValueError('First count matrix must be diagonal.')
+        raise ValueError("First count matrix must be diagonal.")
 
 
 @torch.no_grad()
@@ -31,7 +34,9 @@ def rescale_sinkhorn_input(K: torch.Tensor, min_entry: float = 1e-24) -> torch.T
 
 
 @torch.no_grad()
-def get_log_likelihood(C: torch.Tensor, U: torch.Tensor, min_entry: float | None = None) -> torch.Tensor:
+def get_log_likelihood(
+    C: torch.Tensor, U: torch.Tensor, min_entry: float | None = None
+) -> torch.Tensor:
     """Compute the (smoothed) log-likelihood sum_{ij} C_{ij} log U_{ij}.
 
     Parameters
@@ -54,10 +59,9 @@ def get_log_likelihood(C: torch.Tensor, U: torch.Tensor, min_entry: float | None
 
 
 @torch.no_grad()
-def generalized_kl_divergence(p: torch.Tensor,
-                              q: torch.Tensor,
-                              eps: float = 1e-12,
-                              reduction: str = 'sum') -> torch.Tensor:
+def generalized_kl_divergence(
+    p: torch.Tensor, q: torch.Tensor, eps: float = 1e-12, reduction: str = "sum"
+) -> torch.Tensor:
     """Generalized (unnormalized) KL / I-divergence.
 
     For nonnegative matrices p and q, the generalized KL is:
@@ -83,17 +87,17 @@ def generalized_kl_divergence(p: torch.Tensor,
     p_safe = torch.clamp(p, min=eps)
     q_safe = torch.clamp(q, min=eps)
     div = p_safe * (torch.log(p_safe) - torch.log(q_safe)) - p_safe + q_safe
-    if reduction == 'sum':
+    if reduction == "sum":
         return div.sum()
-    if reduction == 'none':
+    if reduction == "none":
         return div
     raise ValueError("reduction must be 'sum' or 'none'")
 
 
 @torch.no_grad()
-def solve_levenberg_step(grad: torch.Tensor,
-                         hess: torch.Tensor,
-                         tol: float = 1e-12) -> tuple[torch.Tensor, float]:
+def solve_levenberg_step(
+    grad: torch.Tensor, hess: torch.Tensor, tol: float = 1e-12
+) -> tuple[torch.Tensor, float]:
     """Solve a Levenberg-regularized Newton system for concave maximization.
     This solves (rho I - H) p = g where H is a symmetric Hessian of a concave objective;
     rho is the smallest nonnegative scalar making -H + rho I positive definite to tolerance.
@@ -123,10 +127,10 @@ def solve_levenberg_step(grad: torch.Tensor,
     K = -symmetrize_matrix(hess)
 
     if gf.ndim != 1:
-        raise ValueError(f'grad must be 1D, got shape {tuple(gf.shape)}.')
+        raise ValueError(f"grad must be 1D, got shape {tuple(gf.shape)}.")
     if K.shape != (gf.numel(), gf.numel()):
         raise ValueError(
-            f'hess must have shape {(gf.numel(), gf.numel())}, got {tuple(K.shape)}.'
+            f"hess must have shape {(gf.numel(), gf.numel())}, got {tuple(K.shape)}."
         )
     if gf.numel() == 0:
         return gf.clone(), 0.0
@@ -138,7 +142,7 @@ def solve_levenberg_step(grad: torch.Tensor,
     )
     K_reg = K + rho_t * torch.eye(K.shape[0], dtype=K.dtype, device=K.device)
 
-    try: # this is faster but fails for ill-conditioned K_reg
+    try:  # this is faster but fails for ill-conditioned K_reg
         step = torch.linalg.solve(K_reg, gf[:, None]).squeeze(1)
     except RuntimeError:
         step = torch.linalg.lstsq(K_reg, gf[:, None]).solution.squeeze(1)
@@ -147,8 +151,9 @@ def solve_levenberg_step(grad: torch.Tensor,
 
 
 @torch.no_grad()
-def build_commuting_constraints_flux(U: torch.Tensor
-                                     ) -> tuple[torch.Tensor, torch.Tensor]:
+def build_commuting_constraints_flux(
+    U: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Construct A x = b equivalent to U F = F U^T where
         x[i * n + j] = F[i, j],
     i.e., using row-major convention.
@@ -165,7 +170,7 @@ def build_commuting_constraints_flux(U: torch.Tensor
     b : (n * n,) torch.Tensor
         Right-hand side, identically zero.
     """
-    check_column_stochastic_matrix(U, name='U')
+    check_column_stochastic_matrix(U, name="U")
     Uf = as_float64(U)
     n = Uf.shape[0]
 
@@ -175,19 +180,17 @@ def build_commuting_constraints_flux(U: torch.Tensor
     row = 0
     for i in range(n):
         for j in range(n):
-            A[row, j::n] += Uf[i, :] # (U F)_{ij}
-            A[row, i * n:(i + 1) * n] -= Uf[j, :] # -(F U^T)_{ij}
+            A[row, j::n] += Uf[i, :]  # (U F)_{ij}
+            A[row, i * n : (i + 1) * n] -= Uf[j, :]  # -(F U^T)_{ij}
             row += 1
 
     return A, b
 
 
 @torch.no_grad()
-def orthonormalize_affine_constraints(A: torch.Tensor,
-                                      b: torch.Tensor,
-                                      tol: float = 1e-12,
-                                      linear: bool = False
-                                      ) -> tuple[torch.Tensor, torch.Tensor, int]:
+def orthonormalize_affine_constraints(
+    A: torch.Tensor, b: torch.Tensor, tol: float = 1e-12, linear: bool = False
+) -> tuple[torch.Tensor, torch.Tensor, int]:
     """Compress A x = b to an equivalent orthonormal system Q x = c.
     If A has rank r, this returns Q with shape (r, n_features).
     Q has orthonormal rows such that A x = b  <=>  Q x = c.
@@ -214,11 +217,11 @@ def orthonormalize_affine_constraints(A: torch.Tensor,
         Numerical rank r.
     """
     if A.ndim != 2:
-        raise ValueError(f'A must be 2D, got shape {tuple(A.shape)}.')
+        raise ValueError(f"A must be 2D, got shape {tuple(A.shape)}.")
     if b.ndim != 1:
-        raise ValueError(f'b must be 1D, got shape {tuple(b.shape)}.')
+        raise ValueError(f"b must be 1D, got shape {tuple(b.shape)}.")
     if b.shape[0] != A.shape[0]:
-        raise ValueError(f'b must have shape ({A.shape[0]},), got {tuple(b.shape)}.')
+        raise ValueError(f"b must have shape ({A.shape[0]},), got {tuple(b.shape)}.")
 
     Af = as_float64(A)
     bf = as_float64(b).to(device=Af.device, dtype=Af.dtype)
@@ -229,11 +232,11 @@ def orthonormalize_affine_constraints(A: torch.Tensor,
             torch.zeros((0,), dtype=Af.dtype, device=Af.device),
             0,
         )
-    
+
     if linear and not bf.abs().max() <= tol:
         warn(
-            'Setting linear to True while b is nonzero ignores b. '
-            f'Largest element of b has magnitude {bf.abs().max():.2e} > tol.'
+            "Setting linear to True while b is nonzero ignores b. "
+            f"Largest element of b has magnitude {bf.abs().max():.2e} > tol."
         )
 
     U, S, Vh = torch.linalg.svd(Af, full_matrices=False)
@@ -253,7 +256,7 @@ def orthonormalize_affine_constraints(A: torch.Tensor,
         rhs_scale = max(1.0, float(torch.linalg.vector_norm(bf).detach().cpu().item()))
         if float(inconsistency.detach().cpu().item()) > rank_tol * rhs_scale:
             raise ValueError(
-                'Linear equality constraints are inconsistent within numerical tolerance.'
+                "Linear equality constraints are inconsistent within numerical tolerance."
             )
         c = (Ur.T @ bf) / S[:rank]
 
@@ -268,12 +271,13 @@ def orthonormalize_affine_constraints(A: torch.Tensor,
 
 
 @torch.no_grad()
-def kl_affine_primal_from_dual(log_k: torch.Tensor,
-                               Q: torch.Tensor,
-                               dual: torch.Tensor,
-                               log_min: float,
-                               log_max: float
-                               ) -> tuple[torch.Tensor, torch.Tensor]:
+def kl_affine_primal_from_dual(
+    log_k: torch.Tensor,
+    Q: torch.Tensor,
+    dual: torch.Tensor,
+    log_min: float,
+    log_max: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Return log_x and x for the affine-KL dual iterate."""
     log_x = torch.clamp(log_k - Q.T @ dual, min=log_min, max=log_max)
     x = torch.exp(log_x)
@@ -281,19 +285,20 @@ def kl_affine_primal_from_dual(log_k: torch.Tensor,
 
 
 @torch.no_grad()
-def kl_affine_dual_backtracking(log_k: torch.Tensor,
-                                Q: torch.Tensor,
-                                c: torch.Tensor,
-                                dual: torch.Tensor,
-                                step: torch.Tensor,
-                                dual_obj: float,
-                                slope: float,
-                                log_min: float,
-                                log_max: float,
-                                ls_update: float = 0.5,
-                                armijo: float = 1e-4,
-                                max_iters_ls: int = 25
-                                ) -> tuple[torch.Tensor, float, float, bool]:
+def kl_affine_dual_backtracking(
+    log_k: torch.Tensor,
+    Q: torch.Tensor,
+    c: torch.Tensor,
+    dual: torch.Tensor,
+    step: torch.Tensor,
+    dual_obj: float,
+    slope: float,
+    log_min: float,
+    log_max: float,
+    ls_update: float = 0.5,
+    armijo: float = 1e-4,
+    max_iters_ls: int = 25,
+) -> tuple[torch.Tensor, float, float, bool]:
     """Armijo backtracking for the affine-KL dual objective."""
     eta = 1.0
     for _ in range(max_iters_ls):
@@ -307,16 +312,17 @@ def kl_affine_dual_backtracking(log_k: torch.Tensor,
 
 
 @torch.no_grad()
-def project_affine_kl_orthonormal(k: torch.Tensor,
-                                  Q: torch.Tensor,
-                                  c: torch.Tensor,
-                                  tol: float = 1e-12,
-                                  max_iters_proj: int = 1000,
-                                  max_iters_ls: int = 25,
-                                  armijo: float = 1e-4,
-                                  min_entry: float = 1e-24,
-                                  dual0: torch.Tensor | None = None
-                                  ) -> tuple[torch.Tensor, dict, torch.Tensor]:
+def project_affine_kl_orthonormal(
+    k: torch.Tensor,
+    Q: torch.Tensor,
+    c: torch.Tensor,
+    tol: float = 1e-12,
+    max_iters_proj: int = 1000,
+    max_iters_ls: int = 25,
+    armijo: float = 1e-4,
+    min_entry: float = 1e-24,
+    dual0: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, AffineProjectionInfo, torch.Tensor]:
     """KL-project k onto the affine set {x : Q x = c} for orthonormal-row Q.
 
     This solves
@@ -351,43 +357,47 @@ def project_affine_kl_orthonormal(k: torch.Tensor,
     -------
     x_proj : (d,) torch.Tensor
         KL projection of k onto the affine set.
-    info : dict
+    info : AffineProjectionInfo
         Diagnostics including residuals and iterations.
     dual : (r,) torch.Tensor
         Final dual iterate, useful as a warm start.
     """
     if k.ndim != 1:
-        raise ValueError(f'k must be 1D, got shape {tuple(k.shape)}.')
+        raise ValueError(f"k must be 1D, got shape {tuple(k.shape)}.")
     if Q.ndim != 2:
-        raise ValueError(f'Q must be 2D, got shape {tuple(Q.shape)}.')
+        raise ValueError(f"Q must be 2D, got shape {tuple(Q.shape)}.")
     if c.ndim != 1:
-        raise ValueError(f'c must be 1D, got shape {tuple(c.shape)}.')
+        raise ValueError(f"c must be 1D, got shape {tuple(c.shape)}.")
 
     kf = as_float64(k).clone()
     Qf = as_float64(Q)
     cf = as_float64(c).to(device=Qf.device, dtype=Qf.dtype)
 
     if Qf.shape[0] != cf.shape[0]:
-        raise ValueError(f'Q and c have incompatible shapes {tuple(Qf.shape)} and {tuple(cf.shape)}.')
+        raise ValueError(
+            f"Q and c have incompatible shapes {tuple(Qf.shape)} and {tuple(cf.shape)}."
+        )
     if Qf.shape[1] != kf.numel():
-        raise ValueError(f'Q has incompatible width {Qf.shape[1]} for k with {kf.numel()} entries.')
+        raise ValueError(
+            f"Q has incompatible width {Qf.shape[1]} for k with {kf.numel()} entries."
+        )
     if not torch.isfinite(kf).all():
-        raise ValueError('k must have only finite entries.')
+        raise ValueError("k must have only finite entries.")
 
     min_entry = float(min_entry)
     if min_entry <= 0.0:
-        raise ValueError(f'min_entry must be positive, got {min_entry}.')
+        raise ValueError(f"min_entry must be positive, got {min_entry}.")
 
     kf = torch.clamp(nan_to_pos(kf, min_entry=min_entry), min=min_entry)
 
     if Qf.shape[0] == 0:
-        info = {
-            'converged': True,
-            'iters': 0,
-            'affine_err': 0.0,
-            'step_err': 0.0,
-            'dual_obj': float(kf.sum().detach().cpu().item()),
-            'ridge': 0.0,
+        info: AffineProjectionInfo = {
+            "converged": True,
+            "iters": 0,
+            "affine_err": 0.0,
+            "step_err": 0.0,
+            "dual_obj": float(kf.sum().detach().cpu().item()),
+            "ridge": 0.0,
         }
         dual = torch.zeros((0,), dtype=Qf.dtype, device=Qf.device)
         return kf.clone(), info, dual
@@ -396,25 +406,33 @@ def project_affine_kl_orthonormal(k: torch.Tensor,
         dual = torch.zeros((Qf.shape[0],), dtype=Qf.dtype, device=Qf.device)
     else:
         if dual0.ndim != 1:
-            raise ValueError(f'dual0 must be 1D, got shape {tuple(dual0.shape)}')
+            raise ValueError(f"dual0 must be 1D, got shape {tuple(dual0.shape)}")
         dual = as_float64(dual0).to(device=Qf.device, dtype=Qf.dtype)
         if dual.shape != (Qf.shape[0],):
-            raise ValueError(f'dual0 must have shape ({Qf.shape[0]},), got {tuple(dual.shape)}.')
+            raise ValueError(
+                f"dual0 must have shape ({Qf.shape[0]},), got {tuple(dual.shape)}."
+            )
 
     finfo = torch.finfo(kf.dtype)
-    log_min = float(torch.log(torch.tensor(
-        min_entry, dtype=kf.dtype, device=kf.device
-    )).detach().cpu().item())
-    log_max = float(torch.log(torch.tensor(
-        finfo.max, dtype=kf.dtype, device=kf.device
-    )).detach().cpu().item())
+    log_min = float(
+        torch.log(torch.tensor(min_entry, dtype=kf.dtype, device=kf.device))
+        .detach()
+        .cpu()
+        .item()
+    )
+    log_max = float(
+        torch.log(torch.tensor(finfo.max, dtype=kf.dtype, device=kf.device))
+        .detach()
+        .cpu()
+        .item()
+    )
     log_k = torch.log(kf)
 
     converged = False
-    step_err = float('inf')
-    affine_err = float('inf')
-    dual_obj = float('inf')
-    ridge = 0.0 # this is the Levenberg regularization coefficient often called rho
+    step_err = float("inf")
+    affine_err = float("inf")
+    dual_obj = float("inf")
+    ridge = 0.0  # this is the Levenberg regularization coefficient often called rho
     n_iters = 0
 
     for it in range(max_iters_proj):
@@ -430,13 +448,17 @@ def project_affine_kl_orthonormal(k: torch.Tensor,
             step_err = 0.0
             ridge = 0.0
             break
-        
+
         H = symmetrize_matrix((Qf * x.unsqueeze(0)) @ Qf.T)
         step, ridge = solve_levenberg_step(resid, -H, tol=tol)
         step_err = float(torch.abs(step).max().detach().cpu().item())
 
-        slope_t = -torch.dot(resid, step) # = grad^T step for the dual minimization
-        if (not torch.isfinite(step).all()) or (not torch.isfinite(slope_t)) or float(slope_t.detach().cpu().item()) >= 0.0:
+        slope_t = -torch.dot(resid, step)  # = grad^T step for dual minimization
+        if (
+            (not torch.isfinite(step).all())
+            or (not torch.isfinite(slope_t))
+            or float(slope_t.detach().cpu().item()) >= 0.0
+        ):
             break
         slope = float(slope_t.detach().cpu().item())
 
@@ -451,7 +473,7 @@ def project_affine_kl_orthonormal(k: torch.Tensor,
             log_min=log_min,
             log_max=log_max,
             armijo=armijo,
-            max_iters_ls=max_iters_ls
+            max_iters_ls=max_iters_ls,
         )
         step_err = alpha * step_err
 
@@ -464,13 +486,13 @@ def project_affine_kl_orthonormal(k: torch.Tensor,
     if affine_err <= tol:
         converged = True
 
-    info = {
-        'converged': converged,
-        'iters': n_iters,
-        'affine_err': affine_err,
-        'step_err': step_err,
-        'dual_obj': dual_obj,
-        'ridge': ridge,
+    info: AffineProjectionInfo = {
+        "converged": converged,
+        "iters": n_iters,
+        "affine_err": affine_err,
+        "step_err": step_err,
+        "dual_obj": dual_obj,
+        "ridge": ridge,
     }
 
     return x_proj, info, dual

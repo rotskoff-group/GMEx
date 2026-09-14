@@ -10,6 +10,12 @@ from tqdm import tqdm
 
 from .utils.core import *
 from .utils.opt import *
+from .utils.types import (
+    CommutingProjectionInfo,
+    MarginalProjectionInfo,
+    ReversibleCommutingProjectionInfo,
+    SinkhornKnoppInfo,
+)
 
 
 class FluxIProjector(ABC):
@@ -45,8 +51,9 @@ class SinkhornKnoppScaler(FluxIProjector):
 
     Method
     ------
-    def project(self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-                ) -> tuple[torch.Tensor, dict]:
+    def project(
+        self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
+    ) -> tuple[torch.Tensor, SinkhornKnoppInfo]:
         Sinkhorn-scale matrix K to fixed row- and column- marginal P.
 
     Reference
@@ -71,7 +78,7 @@ class SinkhornKnoppScaler(FluxIProjector):
     @torch.no_grad()
     def project(
         self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> tuple[torch.Tensor, SinkhornKnoppInfo]:
         """Sinkhorn-scale matrix K to fixed row- and column- marginal P.
 
         Parameters
@@ -87,7 +94,7 @@ class SinkhornKnoppScaler(FluxIProjector):
         -------
         F : (n, n)
             K information-projected onto feasible subset with target marginals.
-        info : dict
+        info : SinkhornKnoppInfo
             Diagnostics including residuals and iterations.
         """
         check_nonnegative_square_matrix(K, name="K")
@@ -165,8 +172,9 @@ class KnightRuizUcarScaler(FluxIProjector):
 
     Method
     ------
-    def project(self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-                ) -> tuple[torch.Tensor, dict]:
+    def project(
+        self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
+    ) -> tuple[torch.Tensor, MarginalProjectionInfo]:
         Scale matrix K to impose symmetry and fixed row and column marginal P.
 
     Reference
@@ -189,7 +197,7 @@ class KnightRuizUcarScaler(FluxIProjector):
     @torch.no_grad()
     def project(
         self, K: torch.Tensor, P: torch.Tensor, check_every: int = 1
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> tuple[torch.Tensor, MarginalProjectionInfo]:
         """Scale matrix K to impose symmetry and row- and column- marginal P.
 
         Parameters
@@ -205,7 +213,7 @@ class KnightRuizUcarScaler(FluxIProjector):
         -------
         F : (n, n)
             K information-projected onto feasible subset with target marginals.
-        info : dict
+        info : MarginalProjectionInfo
             Diagnostics including residuals and iterations.
         """
         check_nonnegative_square_matrix(K, "K")
@@ -335,7 +343,7 @@ class _CommutingFluxIProjector(FluxIProjector):
     @torch.no_grad()
     def project(
         self, K: torch.Tensor, U_prev: torch.Tensor, check_every: int = 1
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> tuple[torch.Tensor, CommutingProjectionInfo]:
         """Project K onto the flux-commuting affine subset in KL divergence.
 
         Parameters
@@ -352,7 +360,7 @@ class _CommutingFluxIProjector(FluxIProjector):
         -------
         F_proj : (n, n) torch.Tensor
             KL projection of K onto the commuting affine subset.
-        info : dict
+        info : CommutingProjectionInfo
             Diagnostics including residuals, iterations, and affine rank.
         """
         if K.ndim != 2 or K.shape[0] != K.shape[1] or type(K) != torch.Tensor:
@@ -399,7 +407,7 @@ class _CommutingFluxIProjector(FluxIProjector):
         step_err = float(dual_info["step_err"])
         converged = bool(dual_info["converged"]) and max(comm_err, neg_err) <= self.tol
 
-        info = {
+        info: CommutingProjectionInfo = {
             "converged": converged,
             "iters": int(dual_info["iters"]),
             "comm_err": comm_err,
@@ -463,10 +471,12 @@ class ReversibleCommutingIProjector(FluxIProjector):
 
     Method
     ------
-    project(K: torch.Tensor,
-            U_prev: torch.Tensor,
-            P: torch.Tensor,
-            check_every: int = 1) -> tuple[torch.Tensor, dict]:
+    project(
+        K: torch.Tensor,
+        U_prev: torch.Tensor,
+        P: torch.Tensor,
+        check_every: int = 1,
+    ) -> tuple[torch.Tensor, ReversibleCommutingProjectionInfo]:
         Projects K onto feasible subset.
 
     Reference
@@ -538,7 +548,7 @@ class ReversibleCommutingIProjector(FluxIProjector):
         U_prev: torch.Tensor,
         P: torch.Tensor,
         check_every: int = 1,
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> tuple[torch.Tensor, ReversibleCommutingProjectionInfo]:
         """Project K onto the reversible commuting flux subset in KL divergence.
 
         Parameters
@@ -556,7 +566,7 @@ class ReversibleCommutingIProjector(FluxIProjector):
         -------
         F_proj : (n, n) torch.Tensor
             KL projection of K onto the feasible subset.
-        info : dict
+        info : ReversibleCommutingProjectionInfo
             Diagnostics including residuals, iterations, and inner-projector metadata.
         """
         if K.ndim != 2 or K.shape[0] != K.shape[1] or type(K) != torch.Tensor:
@@ -591,8 +601,7 @@ class ReversibleCommutingIProjector(FluxIProjector):
             iter_range = tqdm(iter_range, desc="Cyclic KL projections", leave=False)
 
         self._prepare_cache(Pf)
-        symm_info = {"iters": 0, "row_err": float("inf")}
-        comm_info = {"iters": 0, "affine_err": float("inf"), "constraint_rank": 0}
+        comm_info: CommutingProjectionInfo | None = None
         symm_err = row_err = comm_err = neg_err = step_err = float("inf")
 
         # we always start and end with KRU for stability
@@ -618,7 +627,7 @@ class ReversibleCommutingIProjector(FluxIProjector):
                     converged = True
                     break
 
-        info = {
+        info: ReversibleCommutingProjectionInfo = {
             "converged": converged,
             "iters": it + 1,
             "symm_err": symm_err,
@@ -628,9 +637,13 @@ class ReversibleCommutingIProjector(FluxIProjector):
             "step_err": step_err,
             "symm_iters": int(symm_info["iters"]),
             "symm_row_err": float(symm_info["row_err"]),
-            "comm_iters": int(comm_info["iters"]),
-            "comm_affine_err": float(comm_info["affine_err"]),
-            "constraint_rank": int(comm_info["constraint_rank"]),
+            "comm_iters": comm_info["iters"] if comm_info is not None else 0,
+            "comm_affine_err": comm_info["affine_err"]
+            if comm_info is not None
+            else float("inf"),
+            "constraint_rank": comm_info["constraint_rank"]
+            if comm_info is not None
+            else 0,
             "objective": float(
                 generalized_kl_divergence(
                     F_proj,
@@ -669,7 +682,7 @@ def project_Us(
     max_iters: int = 1000,
     reversible: bool = False,
     verbose: bool = True,
-) -> tuple[torch.Tensor, dict]:
+) -> tuple[torch.Tensor, dict[int, SinkhornKnoppInfo | MarginalProjectionInfo]]:
     """Project transition matrices onto feasible set using Sinkhorn scaling.
 
     Parameters
@@ -693,7 +706,7 @@ def project_Us(
     -------
     Us_proj : (lags, n, n) torch.Tensor
         Transfer operators projected onto feasible set.
-    metrics : dict
+    metrics : dict[int, SinkhornKnoppInfo | MarginalProjectionInfo]
         Projection metadata.
     """
     if reversible:
@@ -703,7 +716,7 @@ def project_Us(
 
     Us_proj = torch.zeros_like(Us)
     Us_proj[0] = Us[0]
-    metrics = {}
+    metrics: dict[int, SinkhornKnoppInfo | MarginalProjectionInfo] = {}
     for lag in tqdm(
         range(1, Us.shape[0]),
         desc="Projecting transition matrices",

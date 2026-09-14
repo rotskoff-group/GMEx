@@ -15,6 +15,7 @@ from gmex.project_feasible import (
     project_Us,
 )
 from gmex.utils.core import column_normalize, symmetrize_matrix
+from gmex.utils.types import CommutingProjectionInfo
 from tests.fixture_types import InhomogeneousMarkovCountData, MarkovCountData
 
 
@@ -198,7 +199,7 @@ def test_commuting_projector_is_identity_for_identity_uprev() -> None:
     flux, info = projector.project(matrix, identity)
 
     assert torch.equal(flux, matrix)
-    assert info == {
+    expected_info: CommutingProjectionInfo = {
         "converged": True,
         "iters": 0,
         "comm_err": 0.0,
@@ -208,6 +209,7 @@ def test_commuting_projector_is_identity_for_identity_uprev() -> None:
         "constraint_rank": 0,
         "objective": 0.0,
     }
+    assert info == expected_info
 
 
 def test_commuting_projector_enforces_commutation_on_sampled_flux(

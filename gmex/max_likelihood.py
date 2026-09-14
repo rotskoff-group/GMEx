@@ -4,8 +4,10 @@
 
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from copy import copy
 from time import sleep
+from typing import Literal, NotRequired, TypedDict, cast
 
 import torch
 from deeptime.markov.msm import MaximumLikelihoodMSM
@@ -15,6 +17,102 @@ from .project_feasible import *
 from .utils.core import *
 from .utils.opt import *
 from .utils.stats import kl_divergence, tv_distance
+from .utils.types import (
+    MarginalProjectionInfo,
+    ReversibleCommutingProjectionInfo,
+    SinkhornKnoppInfo,
+)
+
+
+class DeeptimeFitInfo(TypedDict):
+    """Identify external estimator used for reversible fit."""
+
+    method: Literal["deeptime"]
+
+
+class UEstimates(TypedDict):
+    """Flux estimate, weighted counts, and projection diagnostics for U."""
+
+    F: torch.Tensor
+    Cw: torch.Tensor
+    proj_info: SinkhornKnoppInfo | MarginalProjectionInfo
+
+
+class GEstimates(TypedDict):
+    """Propagator and flux estimates with projection diagnostics for G."""
+
+    G: torch.Tensor
+    GD: torch.Tensor
+    Cw: torch.Tensor
+    proj_info: SinkhornKnoppInfo | ReversibleCommutingProjectionInfo
+
+
+class Objectives(TypedDict):
+    """Objective-function values used by mirror descent."""
+
+    obj: float
+
+
+class FitPostfix(TypedDict):
+    """Iteration diagnostics, optionally prefixed with current lag."""
+
+    eta_try: float
+    delta_est: float
+    delta_obj: float
+    obj: float
+    proj_iters: int
+    lag: NotRequired[int]
+
+
+class FitInfo(TypedDict):
+    """Termination diagnostics from shared mirror-descent loop."""
+
+    converged: bool
+    iters: int
+    eta_final: float
+    ls_failed: bool
+
+
+class MatrixFitInfo(FitInfo):
+    """Final fit diagnostics common to U and G estimators.
+
+    Notes
+    -----
+    `col_proj_err` is present only for nonreversible fits.
+    """
+
+    col_sum_err: float
+    lim_dist_err: float
+    llh_final: float
+    obj_final: float
+    row_proj_err: float
+    kld_final: float
+    col_proj_err: NotRequired[float]
+
+
+class UFitInfo(MatrixFitInfo):
+    """Final diagnostics for a transition-matrix fit."""
+
+    lim_sigma: float
+
+
+class GFitInfo(MatrixFitInfo):
+    """Final diagnostics for a TCL propagator fit.
+
+    Notes
+    -----
+    `commutator_norm` is present only for reversible fits.
+    """
+
+    lim_sigma_U: float
+    lim_sigma_G: float
+    commutator_norm: NotRequired[float]
+
+
+type GCheckpointMetrics = (
+    Mapping[int, GFitInfo] | Mapping[str, GFitInfo] | Mapping[int | str, GFitInfo]
+)
+
 
 ### ESTIMATOR CLASSES ###
 
@@ -45,7 +143,7 @@ class DeeptimeReversibleU:
     @torch.no_grad()
     def fit(
         self, max_iters: int = 1000000, sparse: bool = False
-    ) -> tuple[torch.Tensor, dict[str, str]]:
+    ) -> tuple[torch.Tensor, DeeptimeFitInfo]:
         """Fit maximum-likelihood transition matrix using Deeptime.
 
         Parameters
@@ -59,7 +157,7 @@ class DeeptimeReversibleU:
         -------
         U : torch.Tensor
             Estimated transition matrix.
-        info : dict
+        info : DeeptimeFitInfo
             {'method': 'deeptime'}
         """
         msm = MaximumLikelihoodMSM(
@@ -83,11 +181,14 @@ class DeeptimeReversibleU:
                 "Deeptime failed. Try increasing max_iters or setting sparse to False."
             )
 
-        info = {"method": "deeptime"}
+        info: DeeptimeFitInfo = {"method": "deeptime"}
         return U, info
 
 
-class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
+class MirrorDescentStochasticMatrix[
+    ProjectorT: FluxIProjector,
+    EstimatesT: UEstimates | GEstimates,
+](ABC):
     """Base class for estimating transition-probability matrices using mirror descent.
 
     Parameters
@@ -135,29 +236,29 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
         return Cw / Cw.sum()
 
     @abstractmethod
-    def _initialize_estimates(self, projector: ProjectorT) -> dict:
+    def _initialize_estimates(self, projector: ProjectorT) -> EstimatesT:
         """Initialize estimates."""
         raise NotImplementedError
 
     @abstractmethod
-    def _get_gradients(self, estimates: dict) -> torch.Tensor:
+    def _get_gradients(self, estimates: EstimatesT) -> torch.Tensor:
         """Estimate gradients of objectives with regard to parameters."""
         raise NotImplementedError
 
     @abstractmethod
-    def _get_objectives(self, estimates: dict) -> dict[str, float]:
+    def _get_objectives(self, estimates: EstimatesT) -> Objectives:
         """Evaluate objective-function values."""
         raise NotImplementedError
 
     @abstractmethod
     def _propose_estimates(
         self,
-        estimates: dict,
+        estimates: EstimatesT,
         grad: torch.Tensor,
         eta_try: float,
         grad_clip: float,
         projector: ProjectorT,
-    ) -> dict:
+    ) -> EstimatesT:
         """Propose updated estimates."""
         raise NotImplementedError
 
@@ -166,10 +267,10 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
         self,
         grad: torch.Tensor,
         armijo: float,
-        estimates_before: dict,
-        estimates_try: dict,
-        objectives_before: dict,
-        objectives_try: dict,
+        estimates_before: EstimatesT,
+        estimates_try: EstimatesT,
+        objectives_before: Objectives,
+        objectives_try: Objectives,
     ) -> bool:
         """Decide whether to accept proposal.
 
@@ -183,10 +284,10 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
     @abstractmethod
     def _accept_convergence(
         self,
-        estimates_before: dict,
-        estimates: dict,
-        objectives_before: dict,
-        objectives: dict,
+        estimates_before: EstimatesT,
+        estimates: EstimatesT,
+        objectives_before: Objectives,
+        objectives: Objectives,
     ) -> tuple[bool, float, float]:
         """Decide whether optimization has converged."""
         raise NotImplementedError
@@ -197,9 +298,9 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
         eta_try: float,
         delta_est: float,
         delta_obj: float,
-        estimates: dict,
-        objectives: dict,
-    ) -> dict[str, float | int]:
+        estimates: EstimatesT,
+        objectives: Objectives,
+    ) -> FitPostfix:
         """Get tqdm postfix."""
         return {
             "eta_try": eta_try,
@@ -222,8 +323,8 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
         armijo: float = 1e-9,
         verbose: bool = True,
         log_every: int = 1,
-        postfix_callback: Callable[[dict], None] | None = None,
-    ) -> tuple[dict, dict, dict]:
+        postfix_callback: Callable[[FitPostfix], None] | None = None,
+    ) -> tuple[EstimatesT, Objectives, FitInfo]:
         """Fit maximum-likelihood estimate using mirror ascent with line search.
 
         Parameters
@@ -249,17 +350,17 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
             Whether to display mirror-ascent progress bar.
         log_every : int, optional
             Interval at which to update progress-bar metrics in mirror-ascent iterations.
-        postfix_callback : Callable[[dict], None] | None, optional
+        postfix_callback : Callable[[FitPostfix], None] | None, optional
             Callback for per-iteration progress metrics.
             If provided, receives the same postfix dictionary used by the fit-level progress bar.
 
         Returns
         -------
-        estimates : dict
+        estimates : EstimatesT
             Estimated model parameters.
-        objectives : dict
+        objectives : Objectives
             Objective-function values.
-        info : dict
+        info : FitInfo
             Fit metadata.
         """
         estimates = self._initialize_estimates(projector)
@@ -285,8 +386,8 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
         for it in iter_range:
             iters += 1
             eta_try = float(eta)
-            estimates_before = dict(estimates)
-            objectives_before = dict(objectives)
+            estimates_before = copy(estimates)
+            objectives_before = objectives.copy()
             grad = self._get_gradients(estimates_before)
             accepted = False
             estimates_try = None
@@ -348,7 +449,7 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
                 ls_failed = True
                 break  # break outer loop
 
-        info = {
+        info: FitInfo = {
             "converged": converged,
             "iters": int(iters),
             "eta_final": float(eta_try),
@@ -367,7 +468,11 @@ class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
         return estimates, objectives, info
 
 
-class MirrorDescentU(MirrorDescentStochasticMatrix):
+class MirrorDescentU(
+    MirrorDescentStochasticMatrix[
+        SinkhornKnoppScaler | KnightRuizUcarScaler, UEstimates
+    ]
+):
     """Maximum-likelihood estimator of transition matrix with given limiting distribution.
 
     Parameters
@@ -385,7 +490,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
 
     Method
     ------
-    fit(**kwargs) -> tuple[torch.Tensor, dict]
+    fit(**kwargs) -> tuple[torch.Tensor, UFitInfo]
         Fit maximum-likelihood estimate with specified optimization configruations.
     """
 
@@ -402,7 +507,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
     @torch.no_grad()
     def _initialize_estimates(
         self, projector: SinkhornKnoppScaler | KnightRuizUcarScaler
-    ) -> dict:
+    ) -> UEstimates:
         """Initialize estimates."""
         Cw = super()._get_weighted_counts()
         C0 = as_float64(self.C).clone()
@@ -417,14 +522,14 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         return {"F": F0, "Cw": Cw, "proj_info": proj_info}
 
     @torch.no_grad()
-    def _get_gradients(self, estimates: dict) -> torch.Tensor:
+    def _get_gradients(self, estimates: UEstimates) -> torch.Tensor:
         """Estimate gradient from fluxes and weighted counts."""
         grad = estimates["Cw"] / torch.clamp(estimates["F"], min=self.min_entry)
         grad = grad - torch.mean(grad)  # subtract average for numerical stability
         return grad
 
     @torch.no_grad()
-    def _get_objectives(self, estimates: dict) -> dict[str, float]:
+    def _get_objectives(self, estimates: UEstimates) -> Objectives:
         """Evaluate objective-function values."""
         return {
             "obj": float(
@@ -440,12 +545,12 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
     @torch.no_grad()
     def _propose_estimates(
         self,
-        estimates: dict,
+        estimates: UEstimates,
         grad: torch.Tensor,
         eta_try: float,
         grad_clip: float,
         projector: SinkhornKnoppScaler | KnightRuizUcarScaler,
-    ) -> dict:
+    ) -> UEstimates:
         """Propose updated estimates, generally outside of feasible set."""
         grad_max_amp = grad.abs().max()
         if grad_max_amp > grad_clip:
@@ -465,10 +570,10 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         self,
         grad: torch.Tensor,
         armijo: float,
-        estimates_before: dict,
-        estimates_try: dict,
-        objectives_before: dict,
-        objectives_try: dict,
+        estimates_before: UEstimates,
+        estimates_try: UEstimates,
+        objectives_before: Objectives,
+        objectives_try: Objectives,
     ) -> bool:
         """Decide whether to accept proposal using Armijo line search.
 
@@ -486,10 +591,10 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
     @torch.no_grad()
     def _accept_convergence(
         self,
-        estimates_before: dict,
-        estimates: dict,
-        objectives_before: dict,
-        objectives: dict,
+        estimates_before: UEstimates,
+        estimates: UEstimates,
+        objectives_before: Objectives,
+        objectives: Objectives,
     ) -> tuple[bool, float, float]:
         """Decide whether optimization has converged."""
         delta_est = float(
@@ -520,8 +625,8 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         armijo: float = 1e-9,
         verbose: bool = True,
         log_every: int = 1,
-        postfix_callback: Callable[[dict], None] | None = None,
-    ) -> tuple[torch.Tensor, dict]:
+        postfix_callback: Callable[[FitPostfix], None] | None = None,
+    ) -> tuple[torch.Tensor, UFitInfo]:
         """Fit maximum-likelihood estimate with specified optimization configurations.
 
         Parameters
@@ -534,7 +639,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         -------
         U : torch.Tensor
             Maximum likelihood of estimate of transition matrix.
-        info : dict
+        info : UFitInfo
             Fit metadata.
         """
         if self.reversible:
@@ -546,7 +651,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
                 self.min_entry, max_iters_proj, self.tol, progress=False
             )
 
-        estimates, objectives, info = super()._fit(
+        estimates, objectives, fit_info = super()._fit(
             eta=eta,
             grad_clip=grad_clip,
             line_search=line_search,
@@ -564,22 +669,20 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         proj_info = estimates["proj_info"]
         U = F / self.P[None, :]
 
-        info["col_sum_err"] = (
+        col_sum_err = float(
             (U.sum(dim=0) - 1.0).abs().sum().detach().cpu().item()
         )  # final deviation from stochasticity
-        info["lim_dist_err"] = tv_distance(
-            U @ self.P, self.P
+        lim_dist_err = float(
+            tv_distance(U @ self.P, self.P)
         )  # final error in limiting distribution
-        info["llh_final"] = float(
+        llh_final = float(
             get_log_likelihood(self.C, U, min_entry=self.min_entry)
             .detach()
             .cpu()
             .item()
         )  # final log-likelihood
-        info["obj_final"] = float(objectives["obj"])  # final objective-function value
-        info["row_proj_err"] = float(
-            proj_info["row_err"]
-        )  # final error in flux row marginals
+        obj_final = float(objectives["obj"])  # final objective-function value
+        row_proj_err = float(proj_info["row_err"])  # final error in flux row marginals
 
         kld_final = kl_divergence(
             column_normalize(self.C, fallback_col=self.P),
@@ -588,11 +691,11 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
             reduce_dim=0,
         )
         assert isinstance(kld_final, torch.Tensor)
-        info["kld_final"] = float(
+        kld_value = float(
             kld_final.sum().detach().cpu().item()
         )  # final KL divergence from naive transfer matrix
 
-        info["lim_sigma"] = float(
+        lim_sigma = float(
             torch.nan_to_num(F * torch.log(F / F.T), nan=0.0, posinf=0.0, neginf=0.0)
             .sum()
             .detach()
@@ -600,15 +703,31 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
             .item()
         )  # final estimated stationary entropy production, also ligma
 
+        info: UFitInfo = {
+            **fit_info,
+            "col_sum_err": col_sum_err,
+            "lim_dist_err": lim_dist_err,
+            "llh_final": llh_final,
+            "obj_final": obj_final,
+            "row_proj_err": row_proj_err,
+            "kld_final": kld_value,
+            "lim_sigma": lim_sigma,
+        }
+
         if not self.reversible:
+            # nonreversible fits always use Sinkhorn-Knopp projection
             info["col_proj_err"] = float(
-                proj_info["col_err"]
+                cast(SinkhornKnoppInfo, proj_info)["col_err"]
             )  # final error in flux column marginals
 
         return U, info
 
 
-class MirrorDescentG(MirrorDescentStochasticMatrix):
+class MirrorDescentG(
+    MirrorDescentStochasticMatrix[
+        SinkhornKnoppScaler | ReversibleCommutingIProjector, GEstimates
+    ]
+):
     """Maximum-likelihood estimator of TCL-GME-DT propagator.
     Always enforces limiting distribution and previous-lag transition matrix;
     reversible case enforces detailed balance and commutation with previous-lag transition matrix.
@@ -630,7 +749,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
 
     Method
     ------
-    fit(**kwargs) -> tuple[torch.Tensor, dict]
+    fit(**kwargs) -> tuple[torch.Tensor, GFitInfo]
         Fit maximum-likelihood estimate with specified optimization configurations.
     """
 
@@ -654,7 +773,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
     @torch.no_grad()
     def _initialize_estimates(
         self, projector: SinkhornKnoppScaler | ReversibleCommutingIProjector
-    ) -> dict:
+    ) -> GEstimates:
         """Initialize estimates."""
         try:
             check_stationary_column_stochastic_matrix(
@@ -704,7 +823,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         return {"G": self._G0, "GD": GD0, "Cw": Cw, "proj_info": proj_info}
 
     @torch.no_grad()
-    def _get_gradients(self, estimates: dict) -> torch.Tensor:
+    def _get_gradients(self, estimates: GEstimates) -> torch.Tensor:
         """Estimate gradient from current parameters."""
         # we need the gradient of loglikelihood(C; UD = G UD_prev) wrt GD
         UD = torch.clamp(
@@ -716,7 +835,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         return grad - grad.mean()
 
     @torch.no_grad()
-    def _get_objectives(self, estimates: dict) -> dict[str, float]:
+    def _get_objectives(self, estimates: GEstimates) -> Objectives:
         """Evaluate objective-function values."""
         return {
             "obj": float(
@@ -734,12 +853,12 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
     @torch.no_grad()
     def _propose_estimates(
         self,
-        estimates: dict,
+        estimates: GEstimates,
         grad: torch.Tensor,
         eta_try: float,
         grad_clip: float,
         projector: SinkhornKnoppScaler | ReversibleCommutingIProjector,
-    ) -> dict:
+    ) -> GEstimates:
         """Propose updated estimates, generally outside of feasible set."""
         grad_max_amp = grad.abs().max()
         if grad_max_amp > grad_clip:
@@ -765,10 +884,10 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         self,
         grad: torch.Tensor,
         armijo: float,
-        estimates_before: dict,
-        estimates_try: dict,
-        objectives_before: dict,
-        objectives_try: dict,
+        estimates_before: GEstimates,
+        estimates_try: GEstimates,
+        objectives_before: Objectives,
+        objectives_try: Objectives,
     ) -> bool:
         """Decide whether to accept proposal using Armijo line search.
 
@@ -786,10 +905,10 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
     @torch.no_grad()
     def _accept_convergence(
         self,
-        estimates_before: dict,
-        estimates: dict,
-        objectives_before: dict,
-        objectives: dict,
+        estimates_before: GEstimates,
+        estimates: GEstimates,
+        objectives_before: Objectives,
+        objectives: Objectives,
     ) -> tuple[bool, float, float]:
         """Decide whether optimization has converged."""
         delta_est = float(
@@ -836,8 +955,8 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         verbose: bool = True,
         log_every: int = 1,
         G0: torch.Tensor | None = None,
-        postfix_callback: Callable[[dict], None] | None = None,
-    ) -> tuple[torch.Tensor, dict]:
+        postfix_callback: Callable[[FitPostfix], None] | None = None,
+    ) -> tuple[torch.Tensor, GFitInfo]:
         """Fit maximum-likelihood estimate with specified optimization configurations.
 
         Parameters
@@ -863,7 +982,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         -------
         G : torch.Tensor
             Nested maximum-likelihood estimate of TCL propagator.
-        info : dict
+        info : GFitInfo
             Fit metadata.
         """
         if G0 is not None:
@@ -897,7 +1016,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
                 self.min_entry, max_iters_proj, self.tol, progress=False
             )
 
-        estimates, objectives, info = super()._fit(
+        estimates, objectives, fit_info = super()._fit(
             eta=eta,
             grad_clip=grad_clip,
             line_search=line_search,
@@ -917,44 +1036,54 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         GD = estimates["GD"]
         UD = U * self.P[None, :]
 
-        info["col_sum_err"] = (
+        col_sum_err = float(
             (U.sum(dim=0) - 1.0).abs().sum().detach().cpu().item()
         )  # final deviation from stochasticity
-        info["lim_dist_err"] = tv_distance(
-            U @ self.P, self.P
+        lim_dist_err = float(
+            tv_distance(U @ self.P, self.P)
         )  # final error in limiting distribution
-        info["llh_final"] = float(
+        llh_final = float(
             get_log_likelihood(self.C, U, min_entry=self.min_entry)
             .detach()
             .cpu()
             .item()
         )  # final log-likelihood
-        info["obj_final"] = float(objectives["obj"])  # final objective-function value
-        info["row_proj_err"] = float(
-            proj_info["row_err"]
-        )  # final error in flux row marginals
+        obj_final = float(objectives["obj"])  # final objective-function value
+        row_proj_err = float(proj_info["row_err"])  # final error in flux row marginals
 
         assert self._G0 is not None
         kld_final = kl_divergence(self._G0, G, eps=self.min_entry, reduce_dim=0)
         assert isinstance(kld_final, torch.Tensor)
-        info["kld_final"] = float(
+        kld_value = float(
             kld_final.sum().detach().cpu().item()
         )  # final KL divergence from naive transition matrix
 
-        info["lim_sigma_U"] = float(
+        lim_sigma_U = float(
             torch.nan_to_num(UD * torch.log(UD / UD.T), nan=0.0, posinf=0.0, neginf=0.0)
             .sum()
             .detach()
             .cpu()
             .item()
         )  # final estimated stationary EPR of U
-        info["lim_sigma_G"] = float(
+        lim_sigma_G = float(
             torch.nan_to_num(GD * torch.log(GD / GD.T), nan=0.0, posinf=0.0, neginf=0.0)
             .sum()
             .detach()
             .cpu()
             .item()
         )  # final estimated stationary EPR of G
+        info: GFitInfo = {
+            **fit_info,
+            "col_sum_err": col_sum_err,
+            "lim_dist_err": lim_dist_err,
+            "llh_final": llh_final,
+            "obj_final": obj_final,
+            "row_proj_err": row_proj_err,
+            "kld_final": kld_value,
+            "lim_sigma_U": lim_sigma_U,
+            "lim_sigma_G": lim_sigma_G,
+        }
+
         if self.reversible:
             info["commutator_norm"] = float(
                 torch.linalg.matrix_norm(
@@ -965,8 +1094,9 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
                 .item()
             )
         else:
+            # nonreversible fits always use Sinkhorn-Knopp projection
             info["col_proj_err"] = float(
-                proj_info["col_err"]
+                cast(SinkhornKnoppInfo, proj_info)["col_err"]
             )  # final error in flux column marginals
 
         return G, info
@@ -982,7 +1112,7 @@ def get_reversible_Us_deeptime(
     max_iters: int = 1000000,
     sparse: bool = False,
     verbose: bool = True,
-) -> tuple[torch.Tensor, dict[int, dict[str, str]]]:
+) -> tuple[torch.Tensor, dict[int, DeeptimeFitInfo]]:
     """Estimate maximum-likelihood reversible transition matrices from a stack of count matrices.
     Uses Prinz-Trendelkamp-Schroer estimator implemented in Deeptime instead of mirror descent.
 
@@ -1007,7 +1137,7 @@ def get_reversible_Us_deeptime(
     -------
     Us : (lags, n, n) torch.Tensor
         Maximum-likelihood reversible transition matrices (column-stochastic).
-    metrics : dict
+    metrics : dict[int, DeeptimeFitInfo]
         Each key is an integer lag and each value is {'method': 'deeptime'}.
     """
     check_count_matrices(Cs)
@@ -1016,7 +1146,7 @@ def get_reversible_Us_deeptime(
 
     Us = torch.zeros(Cs.shape, dtype=torch.float64, device=Cs.device)
     Us[0] = torch.eye(Us.shape[1], dtype=torch.float64, device=Us.device)
-    metrics = {}
+    metrics: dict[int, DeeptimeFitInfo] = {}
 
     lag_iter = tqdm(
         range(1, Cs.shape[0]), desc="Lags", leave=False, disable=not verbose
@@ -1044,7 +1174,7 @@ def get_Us_mle(
     armijo: float = 1e-9,
     reversible: bool = False,
     verbose: bool = True,
-) -> tuple[torch.Tensor, dict]:
+) -> tuple[torch.Tensor, dict[int, UFitInfo]]:
     """Estimate maximum-likelihood transition matrices from stack of count matrices.
 
     Parameters
@@ -1063,7 +1193,7 @@ def get_Us_mle(
     -------
     Us : (lags, n, n) torch.Tensor
         Maximum-likelihood transition matrices (column-stochastic).
-    metrics : dict
+    metrics : dict[int, UFitInfo]
         Fit metadata.
     """
     check_count_matrices(Cs)
@@ -1072,14 +1202,14 @@ def get_Us_mle(
 
     Us = torch.zeros(Cs.shape, dtype=torch.float64, device=Cs.device)
     Us[0] = torch.eye(Us.shape[1], dtype=torch.float64, device=Us.device)
-    metrics = {}
+    metrics: dict[int, UFitInfo] = {}
 
     lag_iter = tqdm(
         range(1, Cs.shape[0]), desc="Lags", leave=False, disable=not verbose
     )
     for lag in lag_iter:
 
-        def _update_outer_postfix(postfix: dict, lag: int = lag) -> None:
+        def _update_outer_postfix(postfix: FitPostfix, lag: int = lag) -> None:
             lag_iter.set_postfix({"lag": lag, **postfix})
 
         estimator = MirrorDescentU(
@@ -1120,10 +1250,10 @@ def get_Gs_mle(
     armijo: float = 1e-9,
     armijo_proj: float = 1e-4,
     reversible: bool = False,
-    precomputed: tuple[torch.Tensor, dict] | None = None,
+    precomputed: tuple[torch.Tensor, GCheckpointMetrics] | None = None,
     verbose: bool = True,
-    postfix_callback: Callable[[dict], None] | None = None,
-) -> tuple[torch.Tensor, dict]:
+    postfix_callback: Callable[[FitPostfix], None] | None = None,
+) -> tuple[torch.Tensor, dict[int, GFitInfo]]:
     """Estimate maximum-likelihood TCL GME propagators from stack of count matrices.
 
     Parameters
@@ -1135,13 +1265,14 @@ def get_Gs_mle(
         Required stationary distribution.
     reversible : bool, optional
         Whether implied propagators must be consistent with reversibility.
-    precomputed : tuple[torch.Tensor, dict], optional
+    precomputed : tuple[torch.Tensor, GCheckpointMetrics], optional
         TCL GME propagators and metadata computed for early lags.
         Must have lower zeroth dimension than Cs.
         This is used for checkpointing as the estimators are nested.
+        Metadata accepts integer lag keys or JSON string representations.
     verbose : bool, optional
         Whether to display progress bar.
-    postfix_callback : Callable[[dict], None] | None, optional
+    postfix_callback : Callable[[FitPostfix], None] | None, optional
         Callback for per-iteration progress metrics.
         If provided, receives the same lag-prefixed postfix dictionary used by the lag progress bar.
 
@@ -1149,7 +1280,7 @@ def get_Gs_mle(
     -------
     Gs : (lags, n, n) torch.Tensor
         Maximum-likelihood TCL GME propagators (column-stochastic).
-    metrics : dict
+    metrics : dict[int, GFitInfo]
         Fit metadata.
     """
     check_count_matrices(Cs)
@@ -1160,11 +1291,14 @@ def get_Gs_mle(
     Us = torch.zeros(Cs.shape, dtype=torch.float64, device=Cs.device)
     Gs[0] = torch.eye(Us.shape[1], dtype=torch.float64, device=Us.device)
     Us[0] = torch.eye(Us.shape[1], dtype=torch.float64, device=Us.device)
-    metrics = {}
+    metrics: dict[int, GFitInfo] = {}
 
     start_lag = 1
     if precomputed is not None:
-        Gs_precomputed, info_precomputed = precomputed
+        Gs_precomputed, checkpoint_metrics = precomputed
+        info_precomputed: dict[int | str, GFitInfo] = {
+            key: value for key, value in checkpoint_metrics.items()
+        }
         if Gs_precomputed.shape[1:] != Cs.shape[1:]:
             raise ValueError(
                 "Precomputed propagators must have same 1st and 2nd dimension as Cs."
@@ -1196,8 +1330,8 @@ def get_Gs_mle(
                 info = metrics[1]
             else:
 
-                def _update_outer_postfix(postfix: dict, lag: int = lag) -> None:
-                    progress = {"lag": lag, **postfix}
+                def _update_outer_postfix(postfix: FitPostfix, lag: int = lag) -> None:
+                    progress: FitPostfix = {"lag": lag, **postfix}
                     lag_iter.set_postfix(progress)
                     if postfix_callback is not None:
                         postfix_callback(progress)

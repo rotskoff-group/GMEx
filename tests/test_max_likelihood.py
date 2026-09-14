@@ -11,7 +11,9 @@ import torch
 from deeptime.markov import TransitionCountEstimator, msm
 
 from gmex.max_likelihood import (
+    DeeptimeFitInfo,
     DeeptimeReversibleU,
+    GFitInfo,
     MirrorDescentG,
     MirrorDescentU,
     get_Gs_mle,
@@ -277,7 +279,8 @@ def test_deeptime_reversible_u_matches_manual_transposed_count_fit(
     ).fetch_model()
     U_manual = torch.Tensor(msm_deeptime.transition_matrix).to(U_wrapper).T
     torch.testing.assert_close(U_wrapper, U_manual, atol=1e-12, rtol=0.0)
-    assert info == {"method": "deeptime"}
+    expected_info: DeeptimeFitInfo = {"method": "deeptime"}
+    assert info == expected_info
 
 
 def test_get_us_mle_matches_manual_lagwise_fit_nonreversible(
@@ -418,7 +421,7 @@ def test_get_gs_mle_reversible_rejects_precomputed_mismatched_first_two_lags(
             count_matrices,
             reversible_stationary_dist,
             reversible=True,
-            precomputed=(precomputed_gs, {1: {}, 2: {}}),
+            precomputed=(precomputed_gs, {}),
             verbose=False,
         )
 
@@ -435,11 +438,12 @@ def test_get_gs_mle_resumes_from_precomputed_checkpoint(
         full_out, full_metrics = get_Gs_mle(
             count_matrices, simple_stationary_dist, reversible=False, verbose=False
         )
+        checkpoint_metrics: dict[str, GFitInfo] = {"1": full_metrics[1]}
         resumed_out, resumed_metrics = get_Gs_mle(
             count_matrices,
             simple_stationary_dist,
             reversible=False,
-            precomputed=(full_out[:2], {"1": full_metrics[1]}),
+            precomputed=(full_out[:2], checkpoint_metrics),
             verbose=False,
         )
 
