@@ -16,16 +16,16 @@ from gmex.utils import (
     STATE_LIST_FN,
     STATE_TENSOR_FN,
     TIMES_FN,
-    coarsen_states,
-    get_data_dir,
-    get_results_dir,
-    load_times_macrostates,
-    save_metadata,
-    fixed_timestep_resample,
-    get_split,
     MultiSeqDataset,
     SingleSeqDataset,
-    StateSeqDataset
+    StateSeqDataset,
+    coarsen_states,
+    fixed_timestep_resample,
+    get_data_dir,
+    get_results_dir,
+    get_split,
+    load_times_macrostates,
+    save_metadata,
 )
 
 
@@ -107,10 +107,14 @@ def _assert_positive_lags_match_deeptime(
     dtrajs = _deeptime_dtrajs(dataset)
     for lag_idx in range(1, count_matrices.shape[0]):
         lag = lag_idx * sample_interval
-        counts_deeptime = TransitionCountEstimator(
-            lagtime=lag,
-            count_mode="sliding",
-        ).fit(dtrajs).fetch_model()
+        counts_deeptime = (
+            TransitionCountEstimator(
+                lagtime=lag,
+                count_mode="sliding",
+            )
+            .fit(dtrajs)
+            .fetch_model()
+        )
         assert torch.equal(
             count_matrices[lag_idx].T,
             torch.tensor(counts_deeptime.count_matrix, dtype=torch.float64),
@@ -134,7 +138,9 @@ def test_state_seq_dataset_rejects_nonpositive_context_length() -> None:
 
 def test_state_seq_dataset_requires_exactly_one_input_source() -> None:
     """StateSeqDataset should require either data or both times and states."""
-    with pytest.raises(ValueError, match="Either data xor both times and states must be passed"):
+    with pytest.raises(
+        ValueError, match="Either data xor both times and states must be passed"
+    ):
         StateSeqDataset(timestep=1.0, context_length=1)
 
 
@@ -143,7 +149,9 @@ def test_state_seq_dataset_rejects_mixed_input_sources() -> None:
     times = torch.tensor([0.0, 1.0], dtype=torch.float64)
     states = torch.tensor([0, 1], dtype=torch.long)
 
-    with pytest.raises(ValueError, match="If data is passed, times and states must be None"):
+    with pytest.raises(
+        ValueError, match="If data is passed, times and states must be None"
+    ):
         StateSeqDataset(
             timestep=1.0,
             context_length=1,
@@ -156,8 +164,16 @@ def test_state_seq_dataset_rejects_mixed_input_sources() -> None:
 @pytest.mark.parametrize(
     ("times", "states", "expected_message"),
     [
-        ([0.0, 1.0], torch.tensor([0, 1], dtype=torch.long), "times must be a torch.Tensor"),
-        (torch.tensor([0.0, 1.0], dtype=torch.float64), [0, 1], "states must be a torch.Tensor"),
+        (
+            [0.0, 1.0],
+            torch.tensor([0, 1], dtype=torch.long),
+            "times must be a torch.Tensor",
+        ),
+        (
+            torch.tensor([0.0, 1.0], dtype=torch.float64),
+            [0, 1],
+            "states must be a torch.Tensor",
+        ),
     ],
 )
 def test_state_seq_dataset_rejects_nontensor_times_or_states(
@@ -225,7 +241,9 @@ def test_single_seq_dataset_tensor_path_initializes_from_exact_dt_chain(
     deterministic_two_state_chain: MarkovChain,
 ) -> None:
     """SingleSeqDataset should preserve a tensor trajectory already sampled at the target dt."""
-    times, states = deterministic_two_state_chain.sample(n_steps=4, n_trajs=1, initial_state=0)
+    times, states = deterministic_two_state_chain.sample(
+        n_steps=4, n_trajs=1, initial_state=0
+    )
     dataset = SingleSeqDataset(
         timestep=0.5,
         context_length=2,
@@ -258,7 +276,9 @@ def test_single_seq_dataset_tensor_path_resamples_irregular_observations() -> No
     """SingleSeqDataset should resample irregular times into a fixed-step sequence."""
     times = torch.tensor([0.0, 0.2, 0.5, 1.0], dtype=torch.float64)
     states = torch.tensor([0, 1, 0, 1], dtype=torch.long)
-    dataset = SingleSeqDataset(timestep=0.25, context_length=2, times=times, states=states)
+    dataset = SingleSeqDataset(
+        timestep=0.25, context_length=2, times=times, states=states
+    )
 
     assert torch.equal(dataset.data, torch.tensor([0, 1, 0, 0, 1]))
     assert dataset.n_transitions_raw == 3
@@ -313,8 +333,12 @@ def test_multi_seq_dataset_tensor_path_initializes_from_exact_dt_chain(
     deterministic_two_state_chain: MarkovChain,
 ) -> None:
     """MultiSeqDataset should preserve exact-dt tensor trajectories after resampling."""
-    times_0, states_0 = deterministic_two_state_chain.sample(n_steps=4, n_trajs=1, initial_state=0)
-    times_1, states_1 = deterministic_two_state_chain.sample(n_steps=4, n_trajs=1, initial_state=1)
+    times_0, states_0 = deterministic_two_state_chain.sample(
+        n_steps=4, n_trajs=1, initial_state=0
+    )
+    times_1, states_1 = deterministic_two_state_chain.sample(
+        n_steps=4, n_trajs=1, initial_state=1
+    )
     dataset = MultiSeqDataset(
         timestep=0.5,
         context_length=2,
@@ -361,7 +385,9 @@ def test_multi_seq_dataset_tensor_path_filters_out_short_resampled_records() -> 
         dtype=torch.long,
     )
 
-    dataset = MultiSeqDataset(timestep=0.5, context_length=2, times=times, states=states)
+    dataset = MultiSeqDataset(
+        timestep=0.5, context_length=2, times=times, states=states
+    )
 
     assert len(dataset.data) == 1
     assert len(dataset) == 1
@@ -387,7 +413,9 @@ def test_get_split_returns_single_dataset_for_train_frac_one(
     single_list_data: list[int],
 ) -> None:
     """get_split should return a single dataset when train_frac is 1."""
-    dataset = get_split(timestep=1.0, context_length=2, data=single_list_data, train_frac=1.0)
+    dataset = get_split(
+        timestep=1.0, context_length=2, data=single_list_data, train_frac=1.0
+    )
 
     assert isinstance(dataset, SingleSeqDataset)
     assert dataset.context_length == 2
@@ -446,7 +474,12 @@ def test_get_split_splits_tensor_data_by_dim() -> None:
     )
 
     times_2d = torch.tensor(
-        [[0.0, 0.5, 1.0, 1.5], [0.0, 0.5, 1.0, 1.5], [0.0, 0.5, 1.0, 1.5], [0.0, 0.5, 1.0, 1.5]],
+        [
+            [0.0, 0.5, 1.0, 1.5],
+            [0.0, 0.5, 1.0, 1.5],
+            [0.0, 0.5, 1.0, 1.5],
+            [0.0, 0.5, 1.0, 1.5],
+        ],
         dtype=torch.float64,
     )
     states_2d = torch.tensor(
@@ -473,12 +506,16 @@ def test_get_split_splits_tensor_data_by_dim() -> None:
 def test_get_split_rejects_invalid_train_frac(train_frac: float) -> None:
     """get_split should reject fractions outside (0, 1]."""
     with pytest.raises(ValueError, match=r"train_frac must be in range \(0, 1\]"):
-        get_split(timestep=1.0, context_length=2, data=[0, 1, 0, 1], train_frac=train_frac)
+        get_split(
+            timestep=1.0, context_length=2, data=[0, 1, 0, 1], train_frac=train_frac
+        )
 
 
 def test_get_split_requires_input_source() -> None:
     """get_split should require either data or both times and states."""
-    with pytest.raises(ValueError, match="Either data xor both times and states must be provided"):
+    with pytest.raises(
+        ValueError, match="Either data xor both times and states must be provided"
+    ):
         get_split(timestep=1.0, context_length=1)
 
 
@@ -486,7 +523,9 @@ def test_fixed_timestep_resample_preserves_exact_dt_series() -> None:
     """fixed_timestep_resample should leave an exact-dt trajectory unchanged."""
     times = torch.tensor([0.0, 0.5, 1.0, 1.5], dtype=torch.float64)
     states = torch.tensor([0, 1, 1, 0], dtype=torch.long)
-    new_times, new_states, n_transitions = fixed_timestep_resample(times, states, timestep=0.5)
+    new_times, new_states, n_transitions = fixed_timestep_resample(
+        times, states, timestep=0.5
+    )
 
     assert torch.equal(new_times, times)
     assert new_times.dtype == torch.float64
@@ -498,15 +537,21 @@ def test_fixed_timestep_resample_interpolates_piecewise_constant_states() -> Non
     """fixed_timestep_resample should use previous-state interpolation between jump times."""
     times = torch.tensor([0.0, 0.2, 0.5, 1.0], dtype=torch.float64)
     states = torch.tensor([0, 1, 0, 1], dtype=torch.long)
-    new_times, new_states, n_transitions = fixed_timestep_resample(times, states, timestep=0.25)
+    new_times, new_states, n_transitions = fixed_timestep_resample(
+        times, states, timestep=0.25
+    )
 
-    assert torch.allclose(new_times, torch.tensor([0.0, 0.25, 0.5, 0.75, 1.0], dtype=torch.float64))
+    assert torch.allclose(
+        new_times, torch.tensor([0.0, 0.25, 0.5, 0.75, 1.0], dtype=torch.float64)
+    )
     assert new_times.dtype == torch.float64
     assert torch.equal(new_states, torch.tensor([0, 1, 0, 0, 1]))
     assert n_transitions == (3, 3)
 
 
-def test_fixed_timestep_resample_uses_true_fixed_spacing_when_final_time_is_not_multiple() -> None:
+def test_fixed_timestep_resample_uses_true_fixed_spacing_when_final_time_is_not_multiple() -> (
+    None
+):
     """fixed_timestep_resample should still use the requested timestep when the final time is off-grid."""
     times = torch.tensor([0.0, 0.4, 1.1], dtype=torch.float64)
     states = torch.tensor([0, 1, 1], dtype=torch.long)
@@ -522,7 +567,9 @@ def test_fixed_timestep_resample_uses_true_fixed_spacing_when_final_time_is_not_
     assert torch.equal(new_states, torch.tensor([0, 1, 1]))
 
 
-def test_fixed_timestep_resample_keeps_final_on_grid_sample_despite_float_rounding() -> None:
+def test_fixed_timestep_resample_keeps_final_on_grid_sample_despite_float_rounding() -> (
+    None
+):
     """fixed_timestep_resample should not drop a final sample that lies on the timestep grid."""
     times = torch.tensor([0.0, 0.1, 0.2, 0.3], dtype=torch.float64)
     states = torch.tensor([0, 1, 0, 1], dtype=torch.long)
@@ -532,7 +579,9 @@ def test_fixed_timestep_resample_keeps_final_on_grid_sample_despite_float_roundi
         timestep=0.1,
     )
 
-    assert torch.allclose(new_times, torch.tensor([0.0, 0.1, 0.2, 0.3], dtype=torch.float64))
+    assert torch.allclose(
+        new_times, torch.tensor([0.0, 0.1, 0.2, 0.3], dtype=torch.float64)
+    )
     assert new_times.dtype == torch.float64
     assert torch.equal(new_states, torch.tensor([0, 1, 0, 1]))
     assert n_transitions == (3, 3)
@@ -540,7 +589,9 @@ def test_fixed_timestep_resample_keeps_final_on_grid_sample_despite_float_roundi
 
 def test_fixed_timestep_resample_rejects_mismatched_lengths() -> None:
     """fixed_timestep_resample should reject different numbers of times and states."""
-    with pytest.raises(AssertionError, match="states and times must have the same length"):
+    with pytest.raises(
+        AssertionError, match="states and times must have the same length"
+    ):
         fixed_timestep_resample(
             times=torch.tensor([0.0, 0.5], dtype=torch.float64),
             states=torch.tensor([0], dtype=torch.long),
@@ -548,7 +599,9 @@ def test_fixed_timestep_resample_rejects_mismatched_lengths() -> None:
         )
 
 
-def test_single_seq_dataset_get_count_matrices_matches_expected_literal_counts() -> None:
+def test_single_seq_dataset_get_count_matrices_matches_expected_literal_counts() -> (
+    None
+):
     """SingleSeqDataset should produce the expected literal count matrices."""
     dataset = SingleSeqDataset(timestep=1.0, context_length=1, data=[0, 1, 1, 0])
     observed = dataset.get_count_matrices(verbose=False)
@@ -589,7 +642,9 @@ def test_single_seq_dataset_get_count_matrices_matches_deeptime(
     device_for_testing: str,
 ) -> None:
     """SingleSeqDataset positive-lag count matrices should match deeptime after transpose."""
-    chain = MarkovChain(simple_column_stochastic_matrix, dt=0.5, device=device_for_testing)
+    chain = MarkovChain(
+        simple_column_stochastic_matrix, dt=0.5, device=device_for_testing
+    )
     times, states = chain.sample(n_steps=32, n_trajs=1, initial_state=0)
     dataset = SingleSeqDataset(
         timestep=0.5,
@@ -605,7 +660,9 @@ def test_multi_seq_dataset_get_count_matrices_matches_deeptime(
     device_for_testing: str,
 ) -> None:
     """MultiSeqDataset positive-lag count matrices should match deeptime after transpose."""
-    chain = MarkovChain(simple_column_stochastic_matrix, dt=0.5, device=device_for_testing)
+    chain = MarkovChain(
+        simple_column_stochastic_matrix, dt=0.5, device=device_for_testing
+    )
     times, states = chain.sample(n_steps=16, n_trajs=4, initial_state=0)
     dataset = MultiSeqDataset(
         timestep=0.5,
@@ -624,7 +681,9 @@ def test_get_count_matrices_respects_max_lag(single_list_data: list[int]) -> Non
     _assert_lag_zero_is_state_counts(dataset, observed)
 
 
-def test_get_count_matrices_returns_only_lag_zero_when_sample_interval_exceeds_record_length() -> None:
+def test_get_count_matrices_returns_only_lag_zero_when_sample_interval_exceeds_record_length() -> (
+    None
+):
     """get_count_matrices should return only the zeroth matrix when no positive lag fits."""
     dataset = SingleSeqDataset(timestep=1.0, context_length=1, data=[0, 1, 1, 0])
     observed = dataset.get_count_matrices(sample_interval=10, verbose=False)
@@ -632,7 +691,9 @@ def test_get_count_matrices_returns_only_lag_zero_when_sample_interval_exceeds_r
     _assert_lag_zero_is_state_counts(dataset, observed)
 
 
-def test_multi_seq_dataset_get_count_matrices_bootstrap_preserves_total_counts_by_lag() -> None:
+def test_multi_seq_dataset_get_count_matrices_bootstrap_preserves_total_counts_by_lag() -> (
+    None
+):
     """Bootstrap count matrices should preserve the total counts at each lag."""
     dataset = MultiSeqDataset(
         timestep=1.0,
@@ -644,13 +705,21 @@ def test_multi_seq_dataset_get_count_matrices_bootstrap_preserves_total_counts_b
             [1, 0, 1, 0, 1],
         ],
     )
-    counts_base = dataset.get_count_matrices(sample_interval=1, max_lag=2, bootstrap=False, verbose=False)
-    counts_boot_1 = dataset.get_count_matrices(sample_interval=1, max_lag=2, bootstrap=True, verbose=False)
-    counts_boot_2 = dataset.get_count_matrices(sample_interval=1, max_lag=2, bootstrap=True, verbose=False)
+    counts_base = dataset.get_count_matrices(
+        sample_interval=1, max_lag=2, bootstrap=False, verbose=False
+    )
+    counts_boot_1 = dataset.get_count_matrices(
+        sample_interval=1, max_lag=2, bootstrap=True, verbose=False
+    )
+    counts_boot_2 = dataset.get_count_matrices(
+        sample_interval=1, max_lag=2, bootstrap=True, verbose=False
+    )
     _assert_total_counts_match_per_lag(counts_base, counts_boot_1, counts_boot_2)
 
 
-def test_multi_seq_dataset_get_count_matrices_bootstrap_changes_counts_without_reseed() -> None:
+def test_multi_seq_dataset_get_count_matrices_bootstrap_changes_counts_without_reseed() -> (
+    None
+):
     """Repeated bootstrap calls should redistribute counts without reseeding."""
     dataset = MultiSeqDataset(
         timestep=1.0,
@@ -662,9 +731,15 @@ def test_multi_seq_dataset_get_count_matrices_bootstrap_changes_counts_without_r
             [1, 0, 1, 0, 1],
         ],
     )
-    counts_base = dataset.get_count_matrices(sample_interval=1, max_lag=2, bootstrap=False, verbose=False)
-    counts_boot_1 = dataset.get_count_matrices(sample_interval=1, max_lag=2, bootstrap=True, verbose=False)
-    counts_boot_2 = dataset.get_count_matrices(sample_interval=1, max_lag=2, bootstrap=True, verbose=False)
+    counts_base = dataset.get_count_matrices(
+        sample_interval=1, max_lag=2, bootstrap=False, verbose=False
+    )
+    counts_boot_1 = dataset.get_count_matrices(
+        sample_interval=1, max_lag=2, bootstrap=True, verbose=False
+    )
+    counts_boot_2 = dataset.get_count_matrices(
+        sample_interval=1, max_lag=2, bootstrap=True, verbose=False
+    )
     assert not torch.equal(counts_boot_1, counts_base)
     assert not torch.equal(counts_boot_2, counts_base)
     assert not torch.equal(counts_boot_1, counts_boot_2)
@@ -808,7 +883,7 @@ def test_load_times_macrostates_reads_state_tensor_dataset(
     torch.save(microstates, dataset_dir / STATE_TENSOR_FN)
 
     expected_macrostates = coarsen_states(microstates, simple_groups)
-
+    assert isinstance(expected_macrostates, torch.Tensor)
     dt, observed_times, macrostates, data, n_macrostates = load_times_macrostates(
         "tensor_dataset", device=torch.device("cpu")
     )
