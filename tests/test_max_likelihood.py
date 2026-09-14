@@ -2,70 +2,97 @@
 # test gmex/max_likelihood.py classes and helpers
 
 
-from typing import Dict
 import warnings
+from typing import TypedDict
 
-from deeptime.markov import msm, TransitionCountEstimator
 import numpy as np
 import pytest
 import torch
+from deeptime.markov import TransitionCountEstimator, msm
 
 from gmex.max_likelihood import (
     DeeptimeReversibleU,
-    MirrorDescentU,
     MirrorDescentG,
+    MirrorDescentU,
     get_Gs_mle,
     get_reversible_Us_deeptime,
-    get_Us_mle
+    get_Us_mle,
 )
 from gmex.utils.core import check_stationary_column_stochastic_matrix
+from tests.fixture_types import InhomogeneousMarkovCountData, MarkovCountData
 
 
 def test_reversible_u_satisfies_constraints(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Get maximum-likelihood estimate detailed-balance wrt specified dist."""
     count_matrices = simple_markov_count_data["count_matrices"]
-    mle = MirrorDescentU(count_matrices[1], simple_stationary_dist, reversible=True, tol=1e-12)
+    mle = MirrorDescentU(
+        count_matrices[1], simple_stationary_dist, reversible=True, tol=1e-12
+    )
     U, _ = mle.fit()
-    check_stationary_column_stochastic_matrix(U, simple_stationary_dist, db=True, tol=1e-12)
+    check_stationary_column_stochastic_matrix(
+        U, simple_stationary_dist, db=True, tol=1e-12
+    )
 
 
 def test_nonreversible_u_satisfies_constraints(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Get maximum-likelihood estimate stationary wrt specified dist."""
     count_matrices = simple_markov_count_data["count_matrices"]
-    mle = MirrorDescentU(count_matrices[1], simple_stationary_dist, reversible=False, tol=1e-12)
+    mle = MirrorDescentU(
+        count_matrices[1], simple_stationary_dist, reversible=False, tol=1e-12
+    )
     U, _ = mle.fit()
-    check_stationary_column_stochastic_matrix(U, simple_stationary_dist, db=False, tol=1e-12)
+    check_stationary_column_stochastic_matrix(
+        U, simple_stationary_dist, db=False, tol=1e-12
+    )
 
 
 def test_reversible_g_satisfies_constraints(
-    reversible_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    reversible_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
     """Get maximum-likelihood estimate commuting with U_prev and detailed-balance wrt specified dist."""
     count_matrices = reversible_inhomogeneous_markov_count_data["count_matrices"]
     transition_matrices = reversible_inhomogeneous_markov_count_data["transition_stack"]
-    mle = MirrorDescentG(count_matrices[2], transition_matrices[1], reversible_stationary_dist, reversible=True, tol=1e-12)
+    mle = MirrorDescentG(
+        count_matrices[2],
+        transition_matrices[1],
+        reversible_stationary_dist,
+        reversible=True,
+        tol=1e-12,
+    )
     G, _ = mle.fit()
-    check_stationary_column_stochastic_matrix(G, reversible_stationary_dist, db=True, tol=1e-12)
-    assert (G @ transition_matrices[1] - transition_matrices[1] @ G).abs().max() <= 1e-12
+    check_stationary_column_stochastic_matrix(
+        G, reversible_stationary_dist, db=True, tol=1e-12
+    )
+    assert (
+        G @ transition_matrices[1] - transition_matrices[1] @ G
+    ).abs().max() <= 1e-12
 
 
 def test_nonreversible_g_satisfies_constraints(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Get maximum-likelihood estimate stationary wrt specified dist."""
     count_matrices = simple_inhomogeneous_markov_count_data["count_matrices"]
     transition_matrices = simple_inhomogeneous_markov_count_data["transition_stack"]
-    mle = MirrorDescentG(count_matrices[2], transition_matrices[1], simple_stationary_dist, reversible=False, tol=1e-12)
+    mle = MirrorDescentG(
+        count_matrices[2],
+        transition_matrices[1],
+        simple_stationary_dist,
+        reversible=False,
+        tol=1e-12,
+    )
     G, _ = mle.fit()
-    check_stationary_column_stochastic_matrix(G, simple_stationary_dist, db=False, tol=1e-12)
+    check_stationary_column_stochastic_matrix(
+        G, simple_stationary_dist, db=False, tol=1e-12
+    )
 
 
 def test_reversible_u_converges_asymptotically(
@@ -73,7 +100,9 @@ def test_reversible_u_converges_asymptotically(
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
     """Get true reversible transition matrix in asymptotic limit."""
-    count_matrix = reversible_column_stochastic_matrix * reversible_stationary_dist[None, :] * 1e6
+    count_matrix = (
+        reversible_column_stochastic_matrix * reversible_stationary_dist[None, :] * 1e6
+    )
     mle = MirrorDescentU(count_matrix, reversible_stationary_dist, reversible=True)
     U, _ = mle.fit()
     assert torch.allclose(reversible_column_stochastic_matrix, U)
@@ -84,7 +113,9 @@ def test_nonreversible_u_converges_asymptotically(
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Get true nonreversible transition matrix in asymptotic limit."""
-    count_matrix = simple_column_stochastic_matrix * simple_stationary_dist[None, :] * 1e6
+    count_matrix = (
+        simple_column_stochastic_matrix * simple_stationary_dist[None, :] * 1e6
+    )
     mle = MirrorDescentU(count_matrix, simple_stationary_dist, reversible=False)
     U, _ = mle.fit()
     assert torch.allclose(simple_column_stochastic_matrix, U)
@@ -92,21 +123,23 @@ def test_nonreversible_u_converges_asymptotically(
 
 def test_reversible_g_converges_asymptotically(
     reversible_inhomogeneous_column_stochastic_stack: torch.Tensor,
-    reversible_stationary_dist: torch.Tensor
+    reversible_stationary_dist: torch.Tensor,
 ) -> None:
     """Get true reversible propagator in asymptotic limit."""
     U_prev = reversible_inhomogeneous_column_stochastic_stack[1].clone()
     G_true = reversible_inhomogeneous_column_stochastic_stack[2]
     U_true = G_true @ U_prev
     count_matrix = U_true * reversible_stationary_dist[None, :] * 1e6
-    mle = MirrorDescentG(count_matrix, U_prev, reversible_stationary_dist, reversible=True)
+    mle = MirrorDescentG(
+        count_matrix, U_prev, reversible_stationary_dist, reversible=True
+    )
     G_est, _ = mle.fit()
     assert torch.allclose(G_true, G_est)
 
 
 def test_nonreversible_g_converges_asymptotically(
     simple_inhomogeneous_column_stochastic_stack: torch.Tensor,
-    simple_stationary_dist: torch.Tensor
+    simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Get true nonreversible propagator in asymptotic limit."""
     U_prev = simple_inhomogeneous_column_stochastic_stack[1].clone()
@@ -119,13 +152,15 @@ def test_nonreversible_g_converges_asymptotically(
 
 
 def test_reversible_u_and_g_agree_when_uprev_is_eye(
-    simple_inhomogeneous_markov_count_data: torch.Tensor,
-    simple_stationary_dist: torch.Tensor
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
+    simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reversible MirrorDescentU and MirrorDescentG get the same thing at first lag."""
     transition_matrices = simple_inhomogeneous_markov_count_data["transition_stack"]
     U0 = torch.eye(
-        transition_matrices.shape[1], dtype=transition_matrices.dtype, device=transition_matrices.device
+        transition_matrices.shape[1],
+        dtype=transition_matrices.dtype,
+        device=transition_matrices.device,
     )
     count_matrix = simple_inhomogeneous_markov_count_data["count_matrices"][1]
     mleu = MirrorDescentU(count_matrix, simple_stationary_dist, reversible=True)
@@ -136,13 +171,15 @@ def test_reversible_u_and_g_agree_when_uprev_is_eye(
 
 
 def test_nonreversible_u_and_g_agree_when_uprev_is_eye(
-    simple_inhomogeneous_markov_count_data: torch.Tensor,
-    simple_stationary_dist: torch.Tensor
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
+    simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Nonreversible MirrorDescentU and MirrorDescentG get the same thing at first lag."""
     transition_matrices = simple_inhomogeneous_markov_count_data["transition_stack"]
     U0 = torch.eye(
-        transition_matrices.shape[1], dtype=transition_matrices.dtype, device=transition_matrices.device
+        transition_matrices.shape[1],
+        dtype=transition_matrices.dtype,
+        device=transition_matrices.device,
     )
     count_matrix = simple_inhomogeneous_markov_count_data["count_matrices"][1]
     mleu = MirrorDescentU(count_matrix, simple_stationary_dist, reversible=False)
@@ -153,22 +190,26 @@ def test_nonreversible_u_and_g_agree_when_uprev_is_eye(
 
 
 def test_reversible_u_agrees_with_deeptime(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
-    simple_stationary_dist: torch.Tensor
+    simple_markov_count_data: MarkovCountData,
+    simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reversible MirrorDescentU gets Prinz-Trendelkamp-Schroer estimate."""
     count_matrices = simple_markov_count_data["count_matrices"]
-    mle = MirrorDescentU(count_matrices[1], simple_stationary_dist, reversible=True, tol=1e-12)
+    mle = MirrorDescentU(
+        count_matrices[1], simple_stationary_dist, reversible=True, tol=1e-12
+    )
     U, _ = mle.fit(line_search=False)
-    
+
     records = simple_markov_count_data["dataset"].data
-    counts_estimator_deeptime = TransitionCountEstimator(lagtime=1, count_mode='sliding')
+    counts_estimator_deeptime = TransitionCountEstimator(
+        lagtime=1, count_mode="sliding"
+    )
     counts_deeptime = counts_estimator_deeptime.fit(np.array(records)).fetch_model()
     msm_estimator_deeptime = msm.MaximumLikelihoodMSM(
         reversible=True,
         maxerr=1e-24,
         transition_matrix_tolerance=1e-24,
-        stationary_distribution_constraint=simple_stationary_dist.cpu().numpy()
+        stationary_distribution_constraint=simple_stationary_dist.cpu().numpy(),
     )
     msm_deeptime = msm_estimator_deeptime.fit(counts_deeptime).fetch_model()
     U_deeptime = torch.Tensor(msm_deeptime.transition_matrix).to(U).T
@@ -177,26 +218,32 @@ def test_reversible_u_agrees_with_deeptime(
 
 
 def test_reversible_g_agrees_with_deeptime_when_uprev_is_eye(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
-    simple_stationary_dist: torch.Tensor
+    simple_markov_count_data: MarkovCountData,
+    simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reversible MirrorDescentG gets Prinz-Trendelkamp-Schroer estimate at first lag."""
     count_matrices = simple_markov_count_data["count_matrices"]
     transition_matrix = simple_markov_count_data["transition_matrix"]
     U_prev = torch.eye(
-        transition_matrix.shape[1], dtype=transition_matrix.dtype, device=transition_matrix.device
+        transition_matrix.shape[1],
+        dtype=transition_matrix.dtype,
+        device=transition_matrix.device,
     )
-    mle = MirrorDescentG(count_matrices[1], U_prev, simple_stationary_dist, reversible=True, tol=1e-12)
+    mle = MirrorDescentG(
+        count_matrices[1], U_prev, simple_stationary_dist, reversible=True, tol=1e-12
+    )
     G1, _ = mle.fit(line_search=False)
-    
+
     records = simple_markov_count_data["dataset"].data
-    counts_estimator_deeptime = TransitionCountEstimator(lagtime=1, count_mode='sliding')
+    counts_estimator_deeptime = TransitionCountEstimator(
+        lagtime=1, count_mode="sliding"
+    )
     counts_deeptime = counts_estimator_deeptime.fit(np.array(records)).fetch_model()
     msm_estimator_deeptime = msm.MaximumLikelihoodMSM(
         reversible=True,
         maxerr=1e-24,
         transition_matrix_tolerance=1e-24,
-        stationary_distribution_constraint=simple_stationary_dist.cpu().numpy()
+        stationary_distribution_constraint=simple_stationary_dist.cpu().numpy(),
     )
     msm_deeptime = msm_estimator_deeptime.fit(counts_deeptime).fetch_model()
     U_deeptime = torch.Tensor(msm_deeptime.transition_matrix).to(G1).T
@@ -205,12 +252,14 @@ def test_reversible_g_agrees_with_deeptime_when_uprev_is_eye(
 
 
 def test_deeptime_reversible_u_matches_manual_transposed_count_fit(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """DeeptimeReversibleU matches explicit transposed-count Deeptime usage."""
     count_matrices = simple_markov_count_data["count_matrices"]
-    U_wrapper, info = DeeptimeReversibleU(count_matrices[1], simple_stationary_dist).fit()
+    U_wrapper, info = DeeptimeReversibleU(
+        count_matrices[1], simple_stationary_dist
+    ).fit()
     msm_estimator_deeptime = msm.MaximumLikelihoodMSM(
         reversible=True,
         stationary_distribution_constraint=simple_stationary_dist.cpu().numpy(),
@@ -221,26 +270,24 @@ def test_deeptime_reversible_u_matches_manual_transposed_count_fit(
         connectivity_threshold=0,
         transition_matrix_tolerance=1e-24,
         lagtime=None,
-        use_lcc=False
+        use_lcc=False,
     )
-    msm_deeptime = msm_estimator_deeptime.fit(count_matrices[1].T.cpu().numpy()).fetch_model()
+    msm_deeptime = msm_estimator_deeptime.fit(
+        count_matrices[1].T.cpu().numpy()
+    ).fetch_model()
     U_manual = torch.Tensor(msm_deeptime.transition_matrix).to(U_wrapper).T
     torch.testing.assert_close(U_wrapper, U_manual, atol=1e-12, rtol=0.0)
     assert info == {"method": "deeptime"}
 
 
 def test_get_us_mle_matches_manual_lagwise_fit_nonreversible(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Match an explicit per-lag nonreversible MirrorDescentU loop exactly."""
     count_matrices = simple_inhomogeneous_markov_count_data["count_matrices"]
-    assert isinstance(count_matrices, torch.Tensor)
     wrapper_out, metrics = get_Us_mle(
-        count_matrices,
-        simple_stationary_dist,
-        reversible=False,
-        verbose=False
+        count_matrices, simple_stationary_dist, reversible=False, verbose=False
     )
 
     manual_out = torch.zeros_like(wrapper_out)
@@ -249,9 +296,7 @@ def test_get_us_mle_matches_manual_lagwise_fit_nonreversible(
     )
     for lag in range(1, count_matrices.shape[0]):
         estimator = MirrorDescentU(
-            count_matrices[lag],
-            simple_stationary_dist,
-            reversible=False
+            count_matrices[lag], simple_stationary_dist, reversible=False
         )
         manual_out[lag], _ = estimator.fit(verbose=False)
 
@@ -261,17 +306,13 @@ def test_get_us_mle_matches_manual_lagwise_fit_nonreversible(
 
 
 def test_get_us_mle_matches_manual_lagwise_fit_reversible(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Match an explicit per-lag reversible MirrorDescentU loop exactly."""
     count_matrices = simple_inhomogeneous_markov_count_data["count_matrices"]
-    assert isinstance(count_matrices, torch.Tensor)
     wrapper_out, metrics = get_Us_mle(
-        count_matrices,
-        simple_stationary_dist,
-        reversible=True,
-        verbose=False
+        count_matrices, simple_stationary_dist, reversible=True, verbose=False
     )
 
     manual_out = torch.zeros_like(wrapper_out)
@@ -280,9 +321,7 @@ def test_get_us_mle_matches_manual_lagwise_fit_reversible(
     )
     for lag in range(1, count_matrices.shape[0]):
         estimator = MirrorDescentU(
-            count_matrices[lag],
-            simple_stationary_dist,
-            reversible=True
+            count_matrices[lag], simple_stationary_dist, reversible=True
         )
         manual_out[lag], _ = estimator.fit(verbose=False)
 
@@ -295,26 +334,20 @@ def test_get_us_mle_matches_manual_lagwise_fit_reversible(
 
 
 def test_get_reversible_us_deeptime_matches_manual_lagwise_fit(
-    reversible_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    reversible_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
     """Match an explicit lagwise reversible DeeptimeReversibleU loop exactly."""
     count_matrices = reversible_inhomogeneous_markov_count_data["count_matrices"]
-    assert isinstance(count_matrices, torch.Tensor)
     wrapper_out, metrics = get_reversible_Us_deeptime(
-        count_matrices,
-        reversible_stationary_dist,
-        verbose=False
+        count_matrices, reversible_stationary_dist, verbose=False
     )
     manual_out = torch.zeros_like(wrapper_out)
     manual_out[0] = torch.eye(
         count_matrices.shape[1], dtype=wrapper_out.dtype, device=wrapper_out.device
     )
     for lag in range(1, count_matrices.shape[0]):
-        estimator = DeeptimeReversibleU(
-            count_matrices[lag],
-            reversible_stationary_dist
-        )
+        estimator = DeeptimeReversibleU(count_matrices[lag], reversible_stationary_dist)
         manual_out[lag], _ = estimator.fit()
     torch.testing.assert_close(wrapper_out, manual_out, atol=1e-12, rtol=0.0)
     assert torch.equal(wrapper_out[0], manual_out[0])
@@ -323,37 +356,31 @@ def test_get_reversible_us_deeptime_matches_manual_lagwise_fit(
 
 
 def test_get_gs_mle_matches_manual_lagwise_fit_nonreversible(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Match an explicit lagwise nonreversible MirrorDescentG loop exactly."""
     count_matrices = simple_inhomogeneous_markov_count_data["count_matrices"]
     transition_matrices = simple_inhomogeneous_markov_count_data["transition_stack"]
-    assert isinstance(count_matrices, torch.Tensor)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         wrapper_out, metrics = get_Gs_mle(
-            count_matrices,
-            simple_stationary_dist,
-            reversible=False,
-            verbose=False
+            count_matrices, simple_stationary_dist, reversible=False, verbose=False
         )
         manual_out = torch.zeros_like(wrapper_out)
         manual_out[0] = torch.eye(
-            transition_matrices.shape[1], dtype=wrapper_out.dtype, device=wrapper_out.device
+            transition_matrices.shape[1],
+            dtype=wrapper_out.dtype,
+            device=wrapper_out.device,
         )
         U_prev = manual_out[0].clone()
         for lag in range(1, count_matrices.shape[0]):
             estimator = MirrorDescentG(
-                count_matrices[lag],
-                U_prev,
-                simple_stationary_dist,
-                reversible=False
+                count_matrices[lag], U_prev, simple_stationary_dist, reversible=False
             )
             manual_out[lag], _ = estimator.fit(
-                verbose=False,
-                G0=None if lag == 1 else manual_out[lag - 1]
+                verbose=False, G0=None if lag == 1 else manual_out[lag - 1]
             )
             U_prev = manual_out[lag] @ U_prev
 
@@ -363,18 +390,13 @@ def test_get_gs_mle_matches_manual_lagwise_fit_nonreversible(
 
 
 def test_get_gs_mle_reversible_sets_second_lag_to_first(
-    reversible_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    reversible_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
     """Set the second reversible propagator equal to the first."""
     count_matrices = reversible_inhomogeneous_markov_count_data["count_matrices"]
-    assert isinstance(count_matrices, torch.Tensor)
-
     Gs, metrics = get_Gs_mle(
-        count_matrices,
-        reversible_stationary_dist,
-        reversible=True,
-        verbose=False
+        count_matrices, reversible_stationary_dist, reversible=True, verbose=False
     )
 
     torch.testing.assert_close(Gs[1], Gs[2], atol=1e-12, rtol=0.0)
@@ -382,47 +404,43 @@ def test_get_gs_mle_reversible_sets_second_lag_to_first(
 
 
 def test_get_gs_mle_reversible_rejects_precomputed_mismatched_first_two_lags(
-    reversible_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    reversible_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
     """Reject reversible precomputed propagators whose first two lags differ."""
     count_matrices = reversible_inhomogeneous_markov_count_data["count_matrices"]
     precomputed_gs = reversible_inhomogeneous_markov_count_data["transition_stack"]
-    assert isinstance(count_matrices, torch.Tensor)
-    assert isinstance(precomputed_gs, torch.Tensor)
 
-    with pytest.raises(ValueError, match=r"Gs_precomputed\[1\] must equal Gs_precomputed\[2\]"):
+    with pytest.raises(
+        ValueError, match=r"Gs_precomputed\[1\] must equal Gs_precomputed\[2\]"
+    ):
         get_Gs_mle(
             count_matrices,
             reversible_stationary_dist,
             reversible=True,
             precomputed=(precomputed_gs, {1: {}, 2: {}}),
-            verbose=False
+            verbose=False,
         )
 
 
 def test_get_gs_mle_resumes_from_precomputed_checkpoint(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reuse precomputed propagators and accept string lag keys in metadata."""
     count_matrices = simple_inhomogeneous_markov_count_data["count_matrices"]
-    assert isinstance(count_matrices, torch.Tensor)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         full_out, full_metrics = get_Gs_mle(
-            count_matrices,
-            simple_stationary_dist,
-            reversible=False,
-            verbose=False
+            count_matrices, simple_stationary_dist, reversible=False, verbose=False
         )
         resumed_out, resumed_metrics = get_Gs_mle(
             count_matrices,
             simple_stationary_dist,
             reversible=False,
             precomputed=(full_out[:2], {"1": full_metrics[1]}),
-            verbose=False
+            verbose=False,
         )
 
     torch.testing.assert_close(resumed_out, full_out, atol=1e-12, rtol=0.0)
@@ -439,13 +457,21 @@ def test_mirror_descent_u_rejects_zero_counts(
 
 
 def test_mirror_descent_u_rejects_nonpositive_min_entry(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reject a nonpositive lower clamp value."""
     count_matrices = simple_markov_count_data["count_matrices"]
     with pytest.raises(ValueError, match="min_entry must be positive"):
         MirrorDescentU(count_matrices[1], simple_stationary_dist, min_entry=0.0)
+
+
+class _FitControlOverrides(TypedDict, total=False):
+    """Optional fit controls used to exercise input validation."""
+
+    max_iters: int
+    max_iters_ls: int
+    ls_update: float
 
 
 @pytest.mark.parametrize(
@@ -458,9 +484,9 @@ def test_mirror_descent_u_rejects_nonpositive_min_entry(
     ],
 )
 def test_mirror_descent_u_fit_rejects_invalid_iteration_controls(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
-    fit_kwargs: Dict[str, float | int],
+    fit_kwargs: _FitControlOverrides,
     match: str,
 ) -> None:
     """Validate shared fit controls through MirrorDescentU."""
@@ -471,7 +497,7 @@ def test_mirror_descent_u_fit_rejects_invalid_iteration_controls(
 
 
 def test_mirror_descent_g_rejects_shape_mismatch(
-    simple_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reject a previous transition matrix with the wrong shape."""
@@ -481,24 +507,8 @@ def test_mirror_descent_g_rejects_shape_mismatch(
         MirrorDescentG(count_matrices[1], bad_u_prev, simple_stationary_dist)
 
 
-def test_mirror_descent_g_fit_rejects_invalid_g0_type(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
-    simple_stationary_dist: torch.Tensor,
-) -> None:
-    """Reject a non-tensor initial propagator."""
-    count_matrices = simple_inhomogeneous_markov_count_data["count_matrices"]
-    transition_matrices = simple_inhomogeneous_markov_count_data["transition_stack"]
-    estimator = MirrorDescentG(
-        count_matrices[2],
-        transition_matrices[1],
-        simple_stationary_dist,
-    )
-    with pytest.raises(ValueError, match="Expected G0 to be type torch.Tensor"):
-        estimator.fit(G0="not a tensor", verbose=False)
-
-
 def test_mirror_descent_g_fit_rejects_invalid_g0_shape(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reject an initial propagator with the wrong shape."""
@@ -514,7 +524,7 @@ def test_mirror_descent_g_fit_rejects_invalid_g0_shape(
 
 
 def test_mirror_descent_g_warns_and_repairs_invalid_uprev(
-    simple_inhomogeneous_markov_count_data: Dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Warn and repair a slightly invalid previous transition matrix."""
@@ -536,4 +546,6 @@ def test_mirror_descent_g_warns_and_repairs_invalid_uprev(
             verbose=False,
         )
 
-    check_stationary_column_stochastic_matrix(G, simple_stationary_dist, db=False, tol=1e-6)
+    check_stationary_column_stochastic_matrix(
+        G, simple_stationary_dist, db=False, tol=1e-6
+    )

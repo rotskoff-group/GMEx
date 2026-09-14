@@ -15,10 +15,11 @@ from gmex.project_feasible import (
     project_Us,
 )
 from gmex.utils.core import column_normalize, symmetrize_matrix
+from tests.fixture_types import InhomogeneousMarkovCountData, MarkovCountData
 
 
 def test_sinkhorn_projects_sampled_flux_to_target_marginals(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Project sampled flux onto fixed row and column marginals."""
@@ -99,7 +100,7 @@ def test_sinkhorn_stays_stable_for_adversarial_dynamic_range() -> None:
 
 
 def test_sinkhorn_is_idempotent_on_feasible_flux(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reprojecting a feasible Sinkhorn-scaled flux should leave it unchanged."""
@@ -118,7 +119,7 @@ def test_sinkhorn_is_idempotent_on_feasible_flux(
 
 
 def test_kru_projects_sampled_flux_to_symmetric_target_marginal(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Project sampled flux onto the symmetric fixed-marginal subset."""
@@ -165,7 +166,7 @@ def test_kru_stays_finite_for_wide_dynamic_range() -> None:
 
 
 def test_kru_is_idempotent_on_feasible_flux(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Reprojecting a feasible symmetric fixed-marginal flux should be stable."""
@@ -210,7 +211,7 @@ def test_commuting_projector_is_identity_for_identity_uprev() -> None:
 
 
 def test_commuting_projector_enforces_commutation_on_sampled_flux(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     reversible_column_stochastic_matrix: torch.Tensor,
 ) -> None:
     """Project sampled flux onto the commuting affine subset."""
@@ -236,7 +237,7 @@ def test_commuting_projector_enforces_commutation_on_sampled_flux(
 
 
 def test_commuting_projector_is_idempotent_on_feasible_flux(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     reversible_column_stochastic_matrix: torch.Tensor,
 ) -> None:
     """Reprojecting an already commuting positive flux should leave it unchanged."""
@@ -285,7 +286,7 @@ def test_reversible_commuting_matches_kru_for_identity_uprev() -> None:
 
 
 def test_reversible_commuting_projects_to_feasible_subset(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     reversible_column_stochastic_matrix: torch.Tensor,
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
@@ -327,7 +328,7 @@ def test_reversible_commuting_projects_to_feasible_subset(
 
 
 def test_reversible_commuting_is_idempotent_on_feasible_flux(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
     reversible_column_stochastic_matrix: torch.Tensor,
     reversible_stationary_dist: torch.Tensor,
 ) -> None:
@@ -360,7 +361,7 @@ def test_reversible_commuting_is_idempotent_on_feasible_flux(
 
 
 def test_project_us_matches_manual_lagwise_projection_nonreversible(
-    simple_inhomogeneous_markov_count_data: dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Match an explicit per-lag Sinkhorn projection loop exactly."""
@@ -398,7 +399,7 @@ def test_project_us_matches_manual_lagwise_projection_nonreversible(
 
 
 def test_project_us_matches_manual_lagwise_projection_reversible(
-    simple_inhomogeneous_markov_count_data: dict[str, torch.Tensor | object],
+    simple_inhomogeneous_markov_count_data: InhomogeneousMarkovCountData,
     simple_stationary_dist: torch.Tensor,
 ) -> None:
     """Match the reversible lagwise projection loop exactly."""

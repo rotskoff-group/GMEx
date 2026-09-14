@@ -8,10 +8,11 @@ import pytest
 import torch
 
 from gmex.utils.opt import *
+from tests.fixture_types import MarkovCountData
 
 
 def test_check_count_matrices_accepts_markov_generated_counts(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
 ) -> None:
     """Accept count matrices generated from sampled trajectories."""
     count_matrices = simple_markov_count_data["count_matrices"]
@@ -32,7 +33,7 @@ def test_check_count_matrices_rejects_nonsquare_slices() -> None:
 
 
 def test_check_count_matrices_rejects_nondiagonal_lag_zero(
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
 ) -> None:
     """Reject stacks whose zeroth count matrix is not diagonal."""
     count_matrices = simple_markov_count_data["count_matrices"]
@@ -279,7 +280,7 @@ def test_project_affine_kl_orthonormal_is_stable_for_large_dynamic_range() -> No
 
 def test_project_affine_kl_orthonormal_projects_markov_generated_counts(
     simple_column_stochastic_matrix: torch.Tensor,
-    simple_markov_count_data: dict[str, torch.Tensor | object],
+    simple_markov_count_data: MarkovCountData,
 ) -> None:
     """Project a sampled count matrix onto the commuting affine subset."""
     count_matrices = simple_markov_count_data["count_matrices"]

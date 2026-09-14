@@ -12,6 +12,7 @@ import torch
 
 from gmex.markov_process import MarkovChain
 from gmex.utils.datasets import MultiSeqDataset
+from tests.fixture_types import InhomogeneousMarkovCountData, MarkovCountData
 
 ROOT = Path(__file__).resolve().parents[1]
 MPLCONFIGDIR = ROOT / ".pytest_mplconfig"
@@ -262,7 +263,7 @@ def device_for_testing(request):
 @pytest.fixture
 def simple_markov_count_data(
     simple_column_stochastic_matrix: torch.Tensor,
-) -> dict[str, torch.Tensor | MultiSeqDataset]:
+) -> MarkovCountData:
     """Return simple count matrices generated from sampled Markov-chain trajectories."""
     process = MarkovChain(simple_column_stochastic_matrix, dt=0.5, device="cpu")
     with torch.random.fork_rng(devices=[]):
@@ -289,7 +290,7 @@ def simple_markov_count_data(
 @pytest.fixture
 def simple_inhomogeneous_markov_count_data(
     simple_inhomogeneous_column_stochastic_stack: torch.Tensor,
-) -> dict[str, torch.Tensor | MultiSeqDataset]:
+) -> InhomogeneousMarkovCountData:
     """Return multi-lag count matrices from sampled inhomogeneous trajectories."""
     process = MarkovChain(
         simple_inhomogeneous_column_stochastic_stack,
@@ -320,7 +321,7 @@ def simple_inhomogeneous_markov_count_data(
 @pytest.fixture
 def reversible_inhomogeneous_markov_count_data(
     reversible_inhomogeneous_column_stochastic_stack: torch.Tensor,
-) -> dict[str, torch.Tensor | MultiSeqDataset]:
+) -> InhomogeneousMarkovCountData:
     """Return multi-lag count matrices from sampled reversible inhomogeneous trajectories."""
     process = MarkovChain(
         reversible_inhomogeneous_column_stochastic_stack,

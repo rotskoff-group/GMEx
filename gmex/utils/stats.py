@@ -16,7 +16,7 @@ def np_rng_from_L():
 
 
 def _normalize_reduce_dims(
-    ndim: int, reduce_dim: int | tuple[int] | None
+    ndim: int, reduce_dim: int | tuple[int, ...] | None
 ) -> tuple[int, ...]:
     """Normalize reduction dimensions for batched distribution metrics."""
     if reduce_dim is None:
@@ -44,7 +44,7 @@ def kl_divergence(
     dists_truth: torch.Tensor,
     dists_model: torch.Tensor,
     eps: float | None = 1e-12,
-    reduce_dim: int | tuple[int] | None = None,
+    reduce_dim: int | tuple[int, ...] | None = None,
 ) -> float | torch.Tensor:
     """KL divergences between distributions or batches of distributions.
 
@@ -104,7 +104,7 @@ def kl_divergence(
 def tv_distance(
     dists_truth: torch.Tensor,
     dists_model: torch.Tensor,
-    reduce_dim: int | tuple[int] | None = None,
+    reduce_dim: int | tuple[int, ...] | None = None,
 ) -> float | torch.Tensor:
     """Total-variation distance between distributions or batches of distributions.
 

@@ -45,7 +45,7 @@ class DeeptimeReversibleU:
     @torch.no_grad()
     def fit(
         self, max_iters: int = 1000000, sparse: bool = False
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> tuple[torch.Tensor, dict[str, str]]:
         """Fit maximum-likelihood transition matrix using Deeptime.
 
         Parameters
@@ -87,7 +87,7 @@ class DeeptimeReversibleU:
         return U, info
 
 
-class MirrorDescentStochasticMatrix(ABC):
+class MirrorDescentStochasticMatrix[ProjectorT: FluxIProjector](ABC):
     """Base class for estimating transition-probability matrices using mirror descent.
 
     Parameters
@@ -135,7 +135,7 @@ class MirrorDescentStochasticMatrix(ABC):
         return Cw / Cw.sum()
 
     @abstractmethod
-    def _initialize_estimates(self, projector: FluxIProjector) -> dict:
+    def _initialize_estimates(self, projector: ProjectorT) -> dict:
         """Initialize estimates."""
         raise NotImplementedError
 
@@ -145,7 +145,7 @@ class MirrorDescentStochasticMatrix(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _get_objectives(self, estimates: dict) -> dict:
+    def _get_objectives(self, estimates: dict) -> dict[str, float]:
         """Evaluate objective-function values."""
         raise NotImplementedError
 
@@ -156,7 +156,7 @@ class MirrorDescentStochasticMatrix(ABC):
         grad: torch.Tensor,
         eta_try: float,
         grad_clip: float,
-        projector: FluxIProjector,
+        projector: ProjectorT,
     ) -> dict:
         """Propose updated estimates."""
         raise NotImplementedError
@@ -170,8 +170,14 @@ class MirrorDescentStochasticMatrix(ABC):
         estimates_try: dict,
         objectives_before: dict,
         objectives_try: dict,
-    ) -> tuple[bool, bool] | tuple[dict, dict]:
-        """Decide whether to accept proposal."""
+    ) -> bool:
+        """Decide whether to accept proposal.
+
+        Returns
+        -------
+        accepted : bool
+            Whether to accept the proposed estimates.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -193,7 +199,7 @@ class MirrorDescentStochasticMatrix(ABC):
         delta_obj: float,
         estimates: dict,
         objectives: dict,
-    ) -> dict:
+    ) -> dict[str, float | int]:
         """Get tqdm postfix."""
         return {
             "eta_try": eta_try,
@@ -204,9 +210,9 @@ class MirrorDescentStochasticMatrix(ABC):
         }
 
     @torch.no_grad()
-    def fit(
+    def _fit(
         self,
-        projector: FluxIProjector,
+        projector: ProjectorT,
         eta: float = 1.0,
         grad_clip: float = 1e3,
         line_search: bool = True,
@@ -261,7 +267,9 @@ class MirrorDescentStochasticMatrix(ABC):
 
         if max_iters < 1:
             raise ValueError(f"max_iters must be at least 1, got {max_iters}")
-        iter_range = range(max_iters)
+        iter_range = tqdm(
+            range(max_iters), desc="MLE iterations", leave=True, disable=not verbose
+        )
         if verbose and tqdm is not None:
             iter_range = tqdm(iter_range, desc="MLE iterations", leave=True)
 
@@ -281,7 +289,6 @@ class MirrorDescentStochasticMatrix(ABC):
             objectives_before = dict(objectives)
             grad = self._get_gradients(estimates_before)
             accepted = False
-            converged = False
             estimates_try = None
             objectives_try = None
 
@@ -293,7 +300,7 @@ class MirrorDescentStochasticMatrix(ABC):
                     )
                     objectives_try = self._get_objectives(estimates_try)
                 if line_search:
-                    estimates_accept, objectives_accept = self._accept_proposal(
+                    accepted = self._accept_proposal(
                         grad,
                         armijo,
                         estimates_before,
@@ -302,24 +309,23 @@ class MirrorDescentStochasticMatrix(ABC):
                         objectives_try,
                     )
                 else:
-                    estimates_accept = estimates_try
-                    objectives_accept = objectives_try
-                if (
-                    estimates_accept
-                ):  # if line search is accepted or if line_search is False
-                    estimates = estimates_accept
-                    objectives = objectives_accept
                     accepted = True
+
+                if accepted:  # if line search is accepted or if line_search is False
+                    estimates = estimates_try
+                    objectives = objectives_try
                     break  # and break line-search loop
                 eta_try = (
                     eta_try * eta_shrink
-                )  # if LS iter is not accepted, eta decreases for LS next iter
+                )  # if line-search iter is not accepted, eta decreases for line-search next iter
 
             # emit any warnings from final line-search iteration
             for w in list(caught):
                 warnings.warn(str(w.message), category=w.category, stacklevel=2)
 
             # always check for convergence upon exiting inner loop
+            assert estimates_try is not None
+            assert objectives_try is not None
             converged, delta_est, delta_obj = self._accept_convergence(
                 estimates_before,
                 estimates_try,  # latest attempt, accepted or not
@@ -418,7 +424,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         return grad
 
     @torch.no_grad()
-    def _get_objectives(self, estimates: dict) -> dict:
+    def _get_objectives(self, estimates: dict) -> dict[str, float]:
         """Evaluate objective-function values."""
         return {
             "obj": float(
@@ -463,15 +469,19 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         estimates_try: dict,
         objectives_before: dict,
         objectives_try: dict,
-    ) -> tuple[bool, bool] | tuple[dict, dict]:
-        """Decide whether to accept proposal using Armijo line search."""
+    ) -> bool:
+        """Decide whether to accept proposal using Armijo line search.
+
+        Returns
+        -------
+        accepted : bool
+            Whether to accept the proposed estimates.
+        """
         if not estimates_try["proj_info"]["converged"]:
-            return False, False  # always reject when projection fails
+            return False  # always reject when projection fails
         inprod = torch.sum(grad * (estimates_try["F"] - estimates_before["F"]))
         accept = objectives_try["obj"] >= objectives_before["obj"] + armijo * inprod
-        if not accept:
-            return accept, accept
-        return estimates_try, objectives_try
+        return bool(accept)
 
     @torch.no_grad()
     def _accept_convergence(
@@ -536,7 +546,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
                 self.min_entry, max_iters_proj, self.tol, progress=False
             )
 
-        estimates, objectives, info = super().fit(
+        estimates, objectives, info = super()._fit(
             eta=eta,
             grad_clip=grad_clip,
             line_search=line_search,
@@ -570,18 +580,18 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
         info["row_proj_err"] = float(
             proj_info["row_err"]
         )  # final error in flux row marginals
+
+        kld_final = kl_divergence(
+            column_normalize(self.C, fallback_col=self.P),
+            U,
+            eps=self.min_entry,
+            reduce_dim=0,
+        )
+        assert isinstance(kld_final, torch.Tensor)
         info["kld_final"] = float(
-            kl_divergence(
-                column_normalize(self.C, fallback_col=self.P),
-                U,
-                eps=self.min_entry,
-                reduce_dim=0,
-            )
-            .sum()
-            .detach()
-            .cpu()
-            .item()
+            kld_final.sum().detach().cpu().item()
         )  # final KL divergence from naive transfer matrix
+
         info["lim_sigma"] = float(
             torch.nan_to_num(F * torch.log(F / F.T), nan=0.0, posinf=0.0, neginf=0.0)
             .sum()
@@ -589,6 +599,7 @@ class MirrorDescentU(MirrorDescentStochasticMatrix):
             .cpu()
             .item()
         )  # final estimated stationary entropy production, also ligma
+
         if not self.reversible:
             info["col_proj_err"] = float(
                 proj_info["col_err"]
@@ -656,7 +667,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
             )
 
         UD_prev = self.U_prev * self.P[None, :]
-        if self.reversible:
+        if isinstance(projector, ReversibleCommutingIProjector):
             UD_prev, _ = projector._symm.project(UD_prev, self.P)
             projector._symm._reset()
         else:
@@ -684,7 +695,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
                 self._G0 = self._G0.to(self.U_prev.device)
 
         GD0 = torch.clamp(self._G0 * self.P[None, :], min=self.min_entry)
-        if self.reversible:
+        if isinstance(projector, ReversibleCommutingIProjector):
             GD0, proj_info = projector.project(GD0, self.U_prev, self.P)
         else:
             GD0, proj_info = projector.project(GD0, self.P)
@@ -705,7 +716,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         return grad - grad.mean()
 
     @torch.no_grad()
-    def _get_objectives(self, estimates: dict) -> dict:
+    def _get_objectives(self, estimates: dict) -> dict[str, float]:
         """Evaluate objective-function values."""
         return {
             "obj": float(
@@ -736,7 +747,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         exp_try = torch.exp(eta_try * grad)
 
         GD_try = torch.clamp(estimates["GD"], min=self.min_entry) * exp_try
-        if self.reversible:
+        if isinstance(projector, ReversibleCommutingIProjector):
             GD_try, proj_info_try = projector.project(GD_try, self.U_prev, self.P)
         else:
             GD_try, proj_info_try = projector.project(GD_try, self.P)
@@ -758,15 +769,19 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         estimates_try: dict,
         objectives_before: dict,
         objectives_try: dict,
-    ) -> tuple[bool, bool] | tuple[dict, dict]:
-        """Decide whether to accept proposal using Armijo line search."""
+    ) -> bool:
+        """Decide whether to accept proposal using Armijo line search.
+
+        Returns
+        -------
+        accepted : bool
+            Whether to accept the proposed estimates.
+        """
         if not estimates_try["proj_info"]["converged"]:
-            return False, False  # always reject when projection fails
+            return False  # always reject when projection fails
         inprod = torch.sum(grad * (estimates_try["GD"] - estimates_before["GD"]))
         accept = objectives_try["obj"] >= objectives_before["obj"] + armijo * inprod
-        if not accept:
-            return accept, accept
-        return estimates_try, objectives_try
+        return bool(accept)
 
     @torch.no_grad()
     def _accept_convergence(
@@ -882,7 +897,7 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
                 self.min_entry, max_iters_proj, self.tol, progress=False
             )
 
-        estimates, objectives, info = super().fit(
+        estimates, objectives, info = super()._fit(
             eta=eta,
             grad_clip=grad_clip,
             line_search=line_search,
@@ -918,13 +933,14 @@ class MirrorDescentG(MirrorDescentStochasticMatrix):
         info["row_proj_err"] = float(
             proj_info["row_err"]
         )  # final error in flux row marginals
+
+        assert self._G0 is not None
+        kld_final = kl_divergence(self._G0, G, eps=self.min_entry, reduce_dim=0)
+        assert isinstance(kld_final, torch.Tensor)
         info["kld_final"] = float(
-            kl_divergence(self._G0, G, eps=self.min_entry, reduce_dim=0)
-            .sum()
-            .detach()
-            .cpu()
-            .item()
+            kld_final.sum().detach().cpu().item()
         )  # final KL divergence from naive transition matrix
+
         info["lim_sigma_U"] = float(
             torch.nan_to_num(UD * torch.log(UD / UD.T), nan=0.0, posinf=0.0, neginf=0.0)
             .sum()
@@ -966,7 +982,7 @@ def get_reversible_Us_deeptime(
     max_iters: int = 1000000,
     sparse: bool = False,
     verbose: bool = True,
-) -> tuple[torch.Tensor, dict]:
+) -> tuple[torch.Tensor, dict[int, dict[str, str]]]:
     """Estimate maximum-likelihood reversible transition matrices from a stack of count matrices.
     Uses Prinz-Trendelkamp-Schroer estimator implemented in Deeptime instead of mirror descent.
 
@@ -1063,7 +1079,7 @@ def get_Us_mle(
     )
     for lag in lag_iter:
 
-        def _update_outer_postfix(postfix: dict) -> None:
+        def _update_outer_postfix(postfix: dict, lag: int = lag) -> None:
             lag_iter.set_postfix({"lag": lag, **postfix})
 
         estimator = MirrorDescentU(
@@ -1154,11 +1170,12 @@ def get_Gs_mle(
                 "Precomputed propagators must have same 1st and 2nd dimension as Cs."
             )
         start_lag = min(Gs_precomputed.shape[0], Cs.shape[0])
-        if reversible and Gs_precomputed.shape[0] > 2:
-            if not torch.allclose(Gs_precomputed[1], Gs_precomputed[2], atol=tol):
-                raise ValueError(
-                    "Gs_precomputed[1] must equal Gs_precomputed[2] in reversible case."
-                )
+        if (reversible and Gs_precomputed.shape[0] > 2) and not torch.allclose(
+            Gs_precomputed[1], Gs_precomputed[2], atol=tol
+        ):
+            raise ValueError(
+                "Gs_precomputed[1] must equal Gs_precomputed[2] in reversible case."
+            )
 
     lag_iter = tqdm(
         range(1, Cs.shape[0]), desc="Lags", leave=False, disable=not verbose
@@ -1179,7 +1196,7 @@ def get_Gs_mle(
                 info = metrics[1]
             else:
 
-                def _update_outer_postfix(postfix: dict) -> None:
+                def _update_outer_postfix(postfix: dict, lag: int = lag) -> None:
                     progress = {"lag": lag, **postfix}
                     lag_iter.set_postfix(progress)
                     if postfix_callback is not None:
