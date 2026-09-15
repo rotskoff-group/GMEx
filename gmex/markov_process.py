@@ -404,7 +404,7 @@ class MarkovChain(MarkovProcess):
         n_trajs: int = 1,
         max_steps: int | None = None,
         generator: torch.Generator | None = None,
-    ) -> torch.Tensor | int:
+    ) -> torch.Tensor:
         """Simulate first-passage times to a set of end states.
 
         Parameters
@@ -425,9 +425,8 @@ class MarkovChain(MarkovProcess):
 
         Returns
         -------
-        fpts : int | torch.Tensor
-            First-passage time or sorted first-passage times in units of
-            discrete timesteps.
+        fpts : torch.Tensor
+            Sorted first-passage times in units of discrete timesteps.
         """
         if n_trajs < 1:
             raise ValueError("n_trajs must be >= 1")
@@ -491,7 +490,7 @@ class MarkovChain(MarkovProcess):
             alive[idx] = ~end_mask[next_states]
             step += 1
 
-        return int(steps.item()) if n_trajs == 1 else torch.sort(steps).values
+        return torch.sort(steps).values
 
     @torch.no_grad()
     def dwell_probabilities(self, max_timestep: int = 1000) -> torch.Tensor:
