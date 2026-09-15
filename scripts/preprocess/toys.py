@@ -96,7 +96,9 @@ if __name__ == "__main__":
         mjp = MarkovJumpProcess(device=device)
         mjp.parameterize_from_rates(rates)  # parameterize a Markov jump process...
         mc = MarkovChain(  # to parameterize a Markov chain...
-            torch.linalg.matrix_exp(mjp.transition_rate_matrix()), 1.0, device=device
+            torch.linalg.matrix_exp(DT * mjp.transition_rate_matrix()),
+            DT,
+            device=device,
         )  # to parameterize a ground-truth NZ-GME-DT...
         assert isinstance(mc.L, torch.Tensor), "Expected homogeneous Markov chain."
         nzgme = DiscreteTimeGroundTruthNZGME(mc, groups=GROUPS)

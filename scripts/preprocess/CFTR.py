@@ -363,7 +363,7 @@ if __name__ == "__main__":
 
         metadata = dict(METADATA)
         metadata["outdir"] = str(outdir)
-        metadata["nmacro"] = len(levels)
+        metadata["nmacro"] = len(levels) - 1
         metadata["ntraj"] = len(macrostates)
         save_metadata(metadata, outdir / METADATA_FN)
 

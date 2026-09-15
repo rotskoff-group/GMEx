@@ -509,17 +509,22 @@ def test_gillespie(device_for_testing, simple_cycle_rates):
     # probability of transition to 1 = 2/3
     # probability of transition to 3 = 1/3
 
-    # run a long simulation to gather statistics
-    n_steps = 100000
-    times, states = sim.sample(n_steps, initial_state=0)
+    # run long simulation to gather statistics
+    n_trajs = 1000 if torch.device(device_for_testing).type == "cuda" else 1
+    n_steps = 100000 // n_trajs
+    times, states = sim.sample(n_steps, n_trajs=n_trajs, initial_state=0)
 
     # convert to numpy for statistical tests
-    times_np = times.cpu().numpy()
-    states_np = states.cpu().numpy()
+    times_np = np.atleast_2d(times.cpu().numpy())
+    states_np = np.atleast_2d(states.cpu().numpy())
+
+    waiting_times = np.diff(times_np, axis=1).ravel()
+    source_states = states_np[:, :-1].ravel()
+    next_states = states_np[:, 1:].ravel()
 
     # Test 1: waiting time distribution
-    state_0_indices = np.where(states_np[:-1] == 0)[0]
-    waiting_times_0 = times_np[state_0_indices + 1] - times_np[state_0_indices]
+    state_0_mask = source_states == 0
+    waiting_times_0 = waiting_times[state_0_mask]
 
     # known total rate for state 0 is 1.0 + 2.0 = 3.0
     total_rate_0 = 3.0
@@ -536,7 +541,7 @@ def test_gillespie(device_for_testing, simple_cycle_rates):
     }"
 
     # test 2: transition probabilities
-    state_0_transitions = states_np[state_0_indices + 1]
+    state_0_transitions = next_states[state_0_mask]
     unique, counts = np.unique(state_0_transitions, return_counts=True)
     transition_dict = dict(zip(unique, counts))
 
@@ -578,15 +583,13 @@ def test_gillespie(device_for_testing, simple_cycle_rates):
     }"
 
     # test 5: verify all states are accessible
-    visited_states = set(states_np)
+    visited_states = set(states_np.ravel())
     assert len(visited_states) == sim.n_states, "Not all states were visited"
 
     # test 6: Chi-square test for stationary distribution
-    state_durations = np.zeros(sim.n_states)
-    for i in range(len(times_np) - 1):
-        duration = times_np[i + 1] - times_np[i]
-        state_durations[states_np[i]] += duration
-
+    state_durations = np.bincount(
+        source_states, weights=waiting_times, minlength=sim.n_states
+    )
     observed_statdist = state_durations / np.sum(state_durations)
     expected_statdist = sim.stationary_distribution().cpu().numpy()
 
