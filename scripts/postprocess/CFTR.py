@@ -441,6 +441,19 @@ if __name__ == "__main__":
         pos = ax.get_position()
         ax.set_position((pos.x0, pos.y0 + 0.005, pos.width, pos.height))
 
+    # Reduce the gap after panel (a) by a third, keeping (b) and (c) right-aligned.
+    panel_a_gap = ax_r1_1.get_position().x0 - ax_r1_0.get_position().x1
+    left_shift = panel_a_gap / 3
+    for ax in [ax_r1_1, ax_r1_2]:
+        pos = ax.get_position()
+        ax.set_position(
+            (pos.x0 - left_shift, pos.y0, pos.width + left_shift, pos.height)
+        )
+    atpase_pos = ax_r2_1.get_position()
+    ax_r2_1.set_position(
+        (atpase_pos.x0 - left_shift, atpase_pos.y0, atpase_pos.width, atpase_pos.height)
+    )
+
     ### panel (a) ###
     ax_r1_0.text(
         -0.25,
